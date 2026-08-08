@@ -1,12 +1,12 @@
 {
-  "id": "/",
+  "id": "./",
   "name": "Projets Brico",
   "short_name": "Bricoliv",
   "description": "App bricolage",
   "lang": "fr",
   "dir": "auto",
-  "start_url": "/index.html",
-  "scope": "/",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#895353",
@@ -32,7 +32,7 @@
     }
   ],
   "share_target": {
-    "action": "/share.html",
+    "action": "./share.html",
     "method": "GET",
     "params": {
       "title": "title",
