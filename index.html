@@ -604,20 +604,37 @@
 
     // Tentative 1 : Microlink, en JSON complet pour pouvoir vérifier le résultat
     // avant de l'utiliser (titre + image), au lieu de l'injecter en aveugle.
-    // styles= masque agressivement les bannières de cookies/consentement les plus
-    // courantes par CSS, en complément de adblock=true (qui ne les bloque pas toujours
-    // si elles apparaissent après un délai JS plutôt qu'au chargement initial).
-    const hideBannersCss = [
-      '[class*="cookie" i], [id*="cookie" i]',
-      '[class*="consent" i], [id*="consent" i]',
-      '[class*="gdpr" i], [id*="gdpr" i]',
-      '[class*="banner" i][class*="cookie" i]',
-      '.cmp-container, #cmp-container, .cc-window, .cc-banner'
-    ].join(', ') + ' { display: none !important; visibility: hidden !important; }';
+    // On utilise `modules` (JavaScript) plutôt que `styles` (CSS) car les bannières
+    // de consentement modernes (Axeptio, Didomi, OneTrust...) sont souvent construites
+    // en Shadow DOM, une isolation que le CSS global ne peut pas traverser. Le JS,
+    // lui, peut cibler et supprimer l'élément hôte directement, contournant la barrière.
+    const removeBannersJs = `
+      (function() {
+        var hostSelectors = [
+          'axeptio-widget', '#axeptio_overlay', '.axeptio_widget',
+          '#onetrust-banner-sdk', '#onetrust-consent-sdk', '.optanon-alert-box-wrapper', '.ot-sdk-container',
+          '#didomi-host', '.didomi-notice-banner', '.didomi-popup-container',
+          '#CybotCookiebotDialog', '#CybotCookiebotDialogBodyUnderlay',
+          '.qc-cmp2-container', '.qc-cmp2-summary-buttons',
+          '#truste-consent-track', '#truste-consent-content',
+          '.cc-window', '.cc-banner',
+          '[class*="cookie" i]', '[id*="cookie" i]',
+          '[class*="consent" i]', '[id*="consent" i]',
+          '[class*="gdpr" i]', '[id*="gdpr" i]',
+          '[class*="cmp-" i]', '[id*="cmp-" i]'
+        ];
+        hostSelectors.forEach(function(sel) {
+          try {
+            document.querySelectorAll(sel).forEach(function(el) { el.remove(); });
+          } catch (e) {}
+        });
+        document.body.style.overflow = 'auto';
+      })();
+    `;
 
     try {
       const res = await fetch(
-        `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2&styles=${encodeURIComponent(hideBannersCss)}`
+        `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2&waitForTimeout=1500&modules=${encodeURIComponent(removeBannersJs)}`
       );
       const result = await res.json();
       if (result.status === 'success' && result.data) {
@@ -691,7 +708,6 @@
       }
     }
   }
-
   function editDifficulty(id) {
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     const card = saved.find(item => item.id === id);
