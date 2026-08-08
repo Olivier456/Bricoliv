@@ -6,9 +6,9 @@
   <title>Mes Projets Brico</title>
   
   <!-- Déclaration explicite du manifeste pour PWABuilder -->
-  <link rel="manifest" href="/manifest.json">
-  <link rel="icon" type="image/png" href="/icon-192.png">
-  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/png" href="./icon-192.png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
   <meta name="theme-color" content="#f8eeee">
   <meta name="theme-color" content="#2563EB">
 
@@ -123,7 +123,6 @@
     .star-rating, .heart-rating { display: flex; gap: 4px; cursor: pointer; font-size: 18px; }
     .star-rating span, .heart-rating span { opacity: 0.25; filter: grayscale(1); transition: 0.15s; }
     .star-rating span.active, .heart-rating span.active { opacity: 1; filter: none; transform: scale(1.1); }
-
     .btn-submit {
       width: 100%;
       padding: 14px;
@@ -228,7 +227,6 @@
       transform: translateY(-2px);
       box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.08);
     }
-
     .card img {
       width: 100%;
       height: 150px;
@@ -291,7 +289,6 @@
       font-size: 13px;
       font-weight: 600;
     }
-
     .clickable-rating {
       cursor: pointer;
       padding: 2px 6px;
@@ -390,7 +387,7 @@
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').then(reg => {
+      navigator.serviceWorker.register('./sw.js').then(reg => {
         console.log('Service Worker enregistré:', reg.scope);
       }).catch(err => {
         console.error('Échec enregistrement SW:', err);
@@ -480,7 +477,6 @@
       renderCategories();
     }
   }
-
   function editCat(e, index) {
     e.stopPropagation();
     const newName = prompt("Modifier la catégorie :", categories[index]);
@@ -627,7 +623,6 @@
       const catOptions = categories.map(c => 
         `<option value="${c}" ${c === card.category ? 'selected' : ''}>${c}</option>`
       ).join('');
-
       el.innerHTML = `
         <button class="delete-btn" onclick="deleteCard(${card.id})" title="Supprimer">✕</button>
         <img src="${card.image}" onerror="this.src='https://via.placeholder.com/400x200?text=Brico'">
@@ -648,7 +643,6 @@
       container.appendChild(el);
     });
   }
-
   function deleteCard(id) {
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     saved = saved.filter(item => item.id !== id);
