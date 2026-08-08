@@ -1,4 +1,4 @@
-const CACHE_NAME = 'brico-v4';
+const CACHE_NAME = 'brico-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -30,22 +30,17 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  // Ne pas intercepter les appels aux APIs externes (microlink, thum.io)
+  // Ne jamais intercepter les appels vers des domaines externes (mshots, microlink, etc.)
+  // Sinon les images de prévisualisation externes peuvent échouer silencieusement.
+  if (!e.request.url.startsWith(self.location.origin)) return;
+
   if (e.request.method !== 'GET') return;
 
   e.respondWith(
     fetch(e.request)
       .then((response) => {
-        // Met à jour le cache pour les fichiers de l'app en arrière-plan
-        if (e.request.url.startsWith(self.location.origin)) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));    fetch(e.request)
-      .then((response) => {
-        // Met à jour le cache pour les fichiers de l'app en arrière-plan
-        if (e.request.url.startsWith(self.location.origin)) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
-        }
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));
         return response;
       })
       .catch(() => caches.match(e.request))
