@@ -291,6 +291,18 @@
     }
     .recapture-btn:hover { background: rgba(0,0,0,0.75); }
 
+    .verify-badge {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: rgba(217, 119, 6, 0.92);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 8px;
+    }
+
     .card-body {
       padding: 16px;
       flex: 1;
@@ -298,7 +310,6 @@
       flex-direction: column;
       gap: 10px;
     }
-
     .card-badge-select {
       background: var(--bg);
       border: 1px solid var(--border);
@@ -310,6 +321,7 @@
       color: var(--primary);
       cursor: pointer;
     }
+
     .card-title {
       font-weight: 700;
       color: var(--text);
@@ -575,34 +587,55 @@
     }
   }
 
+  // Détecte si le titre/contenu récupéré ressemble à une page de vérification,
+  // de blocage ou d'erreur plutôt qu'au vrai contenu du site (Cloudflare, pare-feu...).
+  function looksLikeBlockedPage(text) {
+    if (!text) return false;
+    return /access denied|403 forbidden|blocked|attention required|just a moment|verifying you|verifying your browser|erreur 403|cloudflare|checking your browser|are you human|robot check/i.test(text);
+  }
+
   async function addBricoLink(url) {
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
 
-    // Service principal : Microlink Screenshot API, en mode "embed" pour recevoir
-    // directement l'image binaire (pas de JSON intermédiaire à parser, donc pas de
-    // risque de plantage silencieux). Gratuit, sans clé API, 25 requêtes/jour.
-    // adblock=true supprime automatiquement les bannières de cookies/pubs à la capture.
-    let imageUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=false&embed=screenshot.url&waitUntil=networkidle2&adblock=true`;
+    let imageUrl = null;
     let title = 'Projet Brico';
+    let needsManualImage = false;
 
-    // On récupère le titre de la page séparément (appel JSON metadata, léger et rapide).
+    // Tentative 1 : Microlink, en JSON complet pour pouvoir vérifier le résultat
+    // avant de l'utiliser (titre + image), au lieu de l'injecter en aveugle.
     try {
-      const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}&meta=true&screenshot=false`);
+      const res = await fetch(
+        `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2`
+      );
       const result = await res.json();
-      if (result.status === 'success' && result.data && result.data.title) {
-        const candidateTitle = result.data.title.trim();
-        // Certains sites (protection Cloudflare, pare-feu, etc.) renvoient une page
-        // d'erreur au lieu du vrai contenu : on filtre les titres qui ressemblent à ça
-        // plutôt que d'afficher "Access denied" comme nom de projet.
-        const looksLikeErrorPage = /access denied|403 forbidden|blocked|attention required|just a moment|erreur 403|cloudflare/i.test(candidateTitle);
-        if (candidateTitle && !looksLikeErrorPage) {
+      if (result.status === 'success' && result.data) {
+        const candidateTitle = (result.data.title || '').trim();
+        const candidateImage = result.data.screenshot && result.data.screenshot.url;
+
+        if (candidateTitle && !looksLikeBlockedPage(candidateTitle)) {
           title = candidateTitle;
+        }
+        if (candidateImage) {
+          imageUrl = candidateImage;
         }
       }
     } catch (e) {
-      console.warn('Métadonnées microlink indisponibles, titre par défaut utilisé', e);
+      console.warn('Microlink indisponible, tentative avec le service de secours', e);
     }
+
+    // Tentative 2 : si Microlink n'a pas donné d'image exploitable, on essaie mshots
+    // (moteur de capture différent, peut réussir là où Microlink échoue).
+    if (!imageUrl) {
+      imageUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=600&h=400`;
+    }
+
+    // Si même le titre n'a pas pu être récupéré proprement, on considère que
+    // l'aperçu est incertain et on le signale visuellement (bouton d'import visible).
+    if (title === 'Projet Brico') {
+      needsManualImage = true;
+    }
+
     const card = {
       id: Date.now(),
       url: url,
@@ -611,7 +644,8 @@
       note: document.getElementById('noteInput').value.trim(),
       difficulty: currentDifficulty,
       hearts: currentHeart,
-      image: imageUrl
+      image: imageUrl,
+      needsManualImage: needsManualImage
     };
 
     saveCard(card);
@@ -674,7 +708,6 @@
       }
     }
   }
-
   // Import d'image manuel : plus fiable que getDisplayMedia() (mal supporté sur
   // Chrome Android). L'utilisateur choisit une photo depuis sa galerie, ou prend
   // une nouvelle capture d'écran via son téléphone puis l'importe ici.
@@ -686,6 +719,7 @@
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return;
+
       const reader = new FileReader();
       reader.onload = (e) => {
         // Redimensionne l'image pour éviter de saturer le localStorage avec des photos trop lourdes
@@ -740,6 +774,7 @@
             <span>📷 Aperçu indisponible</span>
             <button class="capture-btn" onclick="captureManually(${card.id})">Choisir une image</button>
           </div>
+          ${card.needsManualImage ? '<div class="verify-badge" title="Aperçu à vérifier, le site a peut-être bloqué la capture automatique">⚠️ À vérifier</div>' : ''}
           <button class="recapture-btn" onclick="captureManually(${card.id})" title="Remplacer par une image de votre choix">🖼️ Changer l'image</button>
         </div>
         <div class="card-body">
