@@ -276,6 +276,21 @@
     }
     .capture-btn:hover { opacity: 0.9; }
 
+    .recapture-btn {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      background: rgba(0,0,0,0.55);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      backdrop-filter: blur(2px);
+    }
+    .recapture-btn:hover { background: rgba(0,0,0,0.75); }
+
     .card-body {
       padding: 16px;
       flex: 1;
@@ -295,7 +310,6 @@
       color: var(--primary);
       cursor: pointer;
     }
-
     .card-title {
       font-weight: 700;
       color: var(--text);
@@ -394,6 +408,7 @@
       <label>📝 Note ou remarque</label>
       <textarea id="noteInput" placeholder="Ex: Prévoir des chevilles M6 et de l'enduit..."></textarea>
     </div>
+
     <div class="ratings-container">
       <div class="rating-box">
         <label>⭐ Difficulté</label>
@@ -435,6 +450,7 @@
       });
     });
   }
+
   // Réception d'un contenu partagé depuis Android (via share.html)
   function handleIncomingShare() {
     const params = new URLSearchParams(window.location.search);
@@ -587,7 +603,6 @@
     } catch (e) {
       console.warn('Métadonnées microlink indisponibles, titre par défaut utilisé', e);
     }
-
     const card = {
       id: Date.now(),
       url: url,
@@ -713,7 +728,6 @@
     const container = document.getElementById('cardsContainer');
     container.innerHTML = '';
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
-
     if (activeFilter !== 'Tous') {
       saved = saved.filter(item => item.category === activeFilter);
     }
@@ -734,6 +748,7 @@
             <span>📷 Aperçu indisponible</span>
             <button class="capture-btn" onclick="captureManually(${card.id})">Capturer l'écran</button>
           </div>
+          <button class="recapture-btn" onclick="captureManually(${card.id})" title="Remplacer par une vraie capture d'écran">🔄 Recapturer</button>
         </div>
         <div class="card-body">
           <select class="card-badge-select" onchange="updateCardCategory(${card.id}, this.value)">
