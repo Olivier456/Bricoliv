@@ -522,15 +522,15 @@
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
 
-    // Service principal : mshots (WordPress.com), gratuit, sans clé API, sans quota connu.
-    // C'est une simple URL d'image (pas de JSON à parser), donc beaucoup plus fiable.
-    let imageUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=600&h=400`;
+    // Service principal : Microlink Screenshot API, en mode "embed" pour recevoir
+    // directement l'image binaire (pas de JSON intermédiaire à parser, donc pas de
+    // risque de plantage silencieux). Gratuit, sans clé API, 25 requêtes/jour.
+    let imageUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=false&embed=screenshot.url&waitUntil=networkidle2`;
     let title = 'Projet Brico';
 
-    // On récupère le titre de la page séparément via microlink (metadata uniquement,
-    // pas la capture d'écran, donc plus rapide et moins sujet à échec).
+    // On récupère le titre de la page séparément (appel JSON metadata, léger et rapide).
     try {
-      const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}&meta=true`);
+      const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}&meta=true&screenshot=false`);
       const result = await res.json();
       if (result.status === 'success' && result.data && result.data.title) {
         title = result.data.title;
@@ -646,18 +646,6 @@
       `;
       container.appendChild(el);
     });
-
-    // mshots peut renvoyer une image "en cours de génération" au premier chargement.
-    // On force un rafraîchissement de toutes les images après 4 secondes pour récupérer
-    // la vraie capture une fois qu'elle est prête côté serveur.
-    setTimeout(() => {
-      container.querySelectorAll('img[data-original-src]').forEach(img => {
-        const src = img.getAttribute('data-original-src');
-        if (src && src.includes('mshots')) {
-          img.src = src + '&_r=' + Date.now();
-        }
-      });
-    }, 4000);
   }
 
   function deleteCard(id) {
