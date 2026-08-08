@@ -235,6 +235,47 @@
       background: #f1f5f9;
     }
 
+    .card-img-wrap {
+      position: relative;
+      width: 100%;
+      height: 150px;
+    }
+
+    .card-img-wrap img {
+      width: 100%;
+      height: 150px;
+      object-fit: cover;
+      border-bottom: 1.5px solid var(--border);
+      background: #f1f5f9;
+    }
+
+    .capture-fallback {
+      width: 100%;
+      height: 150px;
+      background: var(--primary-light, #f1f5f9);
+      border-bottom: 1.5px solid var(--border);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--primary, #895353);
+      font-size: 13px;
+      text-align: center;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+
+    .capture-btn {
+      background: var(--primary, #895353);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .capture-btn:hover { opacity: 0.9; }
+
     .card-body {
       padding: 16px;
       flex: 1;
@@ -289,6 +330,7 @@
       font-size: 13px;
       font-weight: 600;
     }
+
     .clickable-rating {
       cursor: pointer;
       padding: 2px 6px;
@@ -352,7 +394,6 @@
       <label>📝 Note ou remarque</label>
       <textarea id="noteInput" placeholder="Ex: Prévoir des chevilles M6 et de l'enduit..."></textarea>
     </div>
-
     <div class="ratings-container">
       <div class="rating-box">
         <label>⭐ Difficulté</label>
@@ -394,7 +435,6 @@
       });
     });
   }
-
   // Réception d'un contenu partagé depuis Android (via share.html)
   function handleIncomingShare() {
     const params = new URLSearchParams(window.location.search);
@@ -477,6 +517,7 @@
       renderCategories();
     }
   }
+
   function editCat(e, index) {
     e.stopPropagation();
     const newName = prompt("Modifier la catégorie :", categories[index]);
@@ -525,7 +566,8 @@
     // Service principal : Microlink Screenshot API, en mode "embed" pour recevoir
     // directement l'image binaire (pas de JSON intermédiaire à parser, donc pas de
     // risque de plantage silencieux). Gratuit, sans clé API, 25 requêtes/jour.
-    let imageUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=false&embed=screenshot.url&waitUntil=networkidle2`;
+    // adblock=true supprime automatiquement les bannières de cookies/pubs à la capture.
+    let imageUrl = `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=false&embed=screenshot.url&waitUntil=networkidle2&adblock=true`;
     let title = 'Projet Brico';
 
     // On récupère le titre de la page séparément (appel JSON metadata, léger et rapide).
@@ -533,7 +575,14 @@
       const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}&meta=true&screenshot=false`);
       const result = await res.json();
       if (result.status === 'success' && result.data && result.data.title) {
-        title = result.data.title;
+        const candidateTitle = result.data.title.trim();
+        // Certains sites (protection Cloudflare, pare-feu, etc.) renvoient une page
+        // d'erreur au lieu du vrai contenu : on filtre les titres qui ressemblent à ça
+        // plutôt que d'afficher "Access denied" comme nom de projet.
+        const looksLikeErrorPage = /access denied|403 forbidden|blocked|attention required|just a moment|erreur 403|cloudflare/i.test(candidateTitle);
+        if (candidateTitle && !looksLikeErrorPage) {
+          title = candidateTitle;
+        }
       }
     } catch (e) {
       console.warn('Métadonnées microlink indisponibles, titre par défaut utilisé', e);
@@ -560,6 +609,7 @@
     saved.unshift(card);
     localStorage.setItem('brico_items', JSON.stringify(saved));
   }
+
   function updateCardCategory(id, newCat) {
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     const card = saved.find(item => item.id === id);
@@ -610,6 +660,55 @@
     }
   }
 
+  // Capture manuelle de l'écran via l'API native du navigateur, utilisée en secours
+  // quand la capture automatique (Microlink) échoue (site bloqué, quota dépassé...).
+  // L'utilisateur choisit lui-même l'onglet/écran à capturer via la popup système.
+  async function captureManually(cardId) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      alert("La capture d'écran manuelle n'est pas prise en charge par ce navigateur.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const track = stream.getVideoTracks()[0];
+      const imageCapture = 'ImageCapture' in window ? new ImageCapture(track) : null;
+
+      let bitmap;
+      if (imageCapture) {
+        bitmap = await imageCapture.grabFrame();
+      } else {
+        // Fallback : capture une frame via un <video> temporaire
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        await video.play();
+        await new Promise(r => setTimeout(r, 300));
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        bitmap = canvas;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+      track.stop();
+
+      const saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+      const idx = saved.findIndex(c => c.id === cardId);
+      if (idx !== -1) {
+        saved[idx].image = dataUrl;
+        localStorage.setItem('brico_items', JSON.stringify(saved));
+        loadSavedCards();
+      }
+    } catch (e) {
+      console.warn('Capture manuelle annulée ou échouée', e);
+    }
+  }
+
   function loadSavedCards() {
     const container = document.getElementById('cardsContainer');
     container.innerHTML = '';
@@ -629,7 +728,13 @@
 
       el.innerHTML = `
         <button class="delete-btn" onclick="deleteCard(${card.id})" title="Supprimer">✕</button>
-        <img src="${card.image}" data-original-src="${card.image}" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"400\" height=\"200\"><rect width=\"400\" height=\"200\" fill=\"%23895353\"/><text x=\"200\" y=\"105\" font-size=\"20\" fill=\"%23f8eeee\" text-anchor=\"middle\" font-family=\"Arial\">Aperçu indisponible</text></svg>')}';">
+        <div class="card-img-wrap">
+          <img src="${card.image}" data-original-src="${card.image}" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='flex';">
+          <div class="capture-fallback" style="display:none;">
+            <span>📷 Aperçu indisponible</span>
+            <button class="capture-btn" onclick="captureManually(${card.id})">Capturer l'écran</button>
+          </div>
+        </div>
         <div class="card-body">
           <select class="card-badge-select" onchange="updateCardCategory(${card.id}, this.value)">
             ${catOptions}
