@@ -522,23 +522,21 @@
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
 
-    // Image de secours locale (SVG en base64) si microlink échoue, plutôt que de dépendre
-    // d'un deuxième service tiers instable (thum.io affichait un captcha en usage gratuit).
-    let imageUrl = 'data:image/svg+xml;utf8,' + encodeURIComponent(
-      '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="%23895353"/><text x="300" y="200" font-size="28" fill="%23f8eeee" text-anchor="middle" font-family="Arial">Aperçu indisponible</text></svg>'
-    );
+    // Service principal : mshots (WordPress.com), gratuit, sans clé API, sans quota connu.
+    // C'est une simple URL d'image (pas de JSON à parser), donc beaucoup plus fiable.
+    let imageUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=600&h=400`;
     let title = 'Projet Brico';
 
+    // On récupère le titre de la page séparément via microlink (metadata uniquement,
+    // pas la capture d'écran, donc plus rapide et moins sujet à échec).
     try {
-      const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}&screenshot=true&meta=true`);
+      const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}&meta=true`);
       const result = await res.json();
-      if (result.status === 'success' && result.data) {
-        if (result.data.title) title = result.data.title;
-        if (result.data.screenshot && result.data.screenshot.url) imageUrl = result.data.screenshot.url;
-        else if (result.data.image && result.data.image.url) imageUrl = result.data.image.url;
+      if (result.status === 'success' && result.data && result.data.title) {
+        title = result.data.title;
       }
     } catch (e) {
-      console.warn('Aperçu microlink indisponible, image de secours utilisée', e);
+      console.warn('Métadonnées microlink indisponibles, titre par défaut utilisé', e);
     }
 
     const card = {
@@ -562,7 +560,6 @@
     saved.unshift(card);
     localStorage.setItem('brico_items', JSON.stringify(saved));
   }
-
   function updateCardCategory(id, newCat) {
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     const card = saved.find(item => item.id === id);
@@ -632,7 +629,7 @@
 
       el.innerHTML = `
         <button class="delete-btn" onclick="deleteCard(${card.id})" title="Supprimer">✕</button>
-        <img src="${card.image}" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"400\" height=\"200\"><rect width=\"400\" height=\"200\" fill=\"%23895353\"/><text x=\"200\" y=\"105\" font-size=\"20\" fill=\"%23f8eeee\" text-anchor=\"middle\" font-family=\"Arial\">Aperçu indisponible</text></svg>')}';">
+        <img src="${card.image}" data-original-src="${card.image}" onerror="this.onerror=null; this.src='data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"400\" height=\"200\"><rect width=\"400\" height=\"200\" fill=\"%23895353\"/><text x=\"200\" y=\"105\" font-size=\"20\" fill=\"%23f8eeee\" text-anchor=\"middle\" font-family=\"Arial\">Aperçu indisponible</text></svg>')}';">
         <div class="card-body">
           <select class="card-badge-select" onchange="updateCardCategory(${card.id}, this.value)">
             ${catOptions}
@@ -649,6 +646,18 @@
       `;
       container.appendChild(el);
     });
+
+    // mshots peut renvoyer une image "en cours de génération" au premier chargement.
+    // On force un rafraîchissement de toutes les images après 4 secondes pour récupérer
+    // la vraie capture une fois qu'elle est prête côté serveur.
+    setTimeout(() => {
+      container.querySelectorAll('img[data-original-src]').forEach(img => {
+        const src = img.getAttribute('data-original-src');
+        if (src && src.includes('mshots')) {
+          img.src = src + '&_r=' + Date.now();
+        }
+      });
+    }, 4000);
   }
 
   function deleteCard(id) {
