@@ -1,12 +1,12 @@
-const CACHE_NAME = 'brico-v2';
+const CACHE_NAME = 'brico-v4';
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/share.html',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/icon-512-maskable.png'
+  './',
+  './index.html',
+  './manifest.json',
+  './share.html',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-512-maskable.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -35,6 +35,11 @@ self.addEventListener('fetch', (e) => {
 
   e.respondWith(
     fetch(e.request)
+      .then((response) => {
+        // Met à jour le cache pour les fichiers de l'app en arrière-plan
+        if (e.request.url.startsWith(self.location.origin)) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone));    fetch(e.request)
       .then((response) => {
         // Met à jour le cache pour les fichiers de l'app en arrière-plan
         if (e.request.url.startsWith(self.location.origin)) {
