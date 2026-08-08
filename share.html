@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="/manifest.json">
+  <title>Réception du partage…</title>
+  <style>
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #895353;
+      color: #f8eeee;
+      font-family: Arial, sans-serif;
+      font-size: 1.1rem;
+      text-align: center;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+  <div>⚡ Réception du lien, redirection…</div>
+  <script>
+    // Récupère les paramètres envoyés par Android via share_target (méthode GET)
+    const params = new URLSearchParams(window.location.search);
+    const shared = {
+      title: params.get('title') || '',
+      text: params.get('text') || '',
+      url: params.get('url') || ''
+    };
+    // On stocke temporairement pour que index.html puisse le lire au chargement
+    try {
+      localStorage.setItem('brico_shared_payload', JSON.stringify(shared));
+    } catch (e) {
+      console.error('Impossible de stocker le partage', e);
+    }
+    // Redirige immédiatement vers l'app principale
+    window.location.replace('/index.html?shared=1');
+  </script>
+</body>
+</html>
