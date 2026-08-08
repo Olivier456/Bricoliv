@@ -522,18 +522,24 @@
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
 
-    let imageUrl = `https://image.thum.io/get/width/600/crop/800/${url}`;
+    // Image de secours locale (SVG en base64) si microlink échoue, plutôt que de dépendre
+    // d'un deuxième service tiers instable (thum.io affichait un captcha en usage gratuit).
+    let imageUrl = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="%23895353"/><text x="300" y="200" font-size="28" fill="%23f8eeee" text-anchor="middle" font-family="Arial">Aperçu indisponible</text></svg>'
+    );
     let title = 'Projet Brico';
 
     try {
-      const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}&screenshot=true`);
+      const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}&screenshot=true&meta=true`);
       const result = await res.json();
       if (result.status === 'success' && result.data) {
         if (result.data.title) title = result.data.title;
-        if (result.data.screenshot) imageUrl = result.data.screenshot.url;
-        else if (result.data.image) imageUrl = result.data.image.url;
+        if (result.data.screenshot && result.data.screenshot.url) imageUrl = result.data.screenshot.url;
+        else if (result.data.image && result.data.image.url) imageUrl = result.data.image.url;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Aperçu microlink indisponible, image de secours utilisée', e);
+    }
 
     const card = {
       id: Date.now(),
@@ -623,6 +629,7 @@
       const catOptions = categories.map(c => 
         `<option value="${c}" ${c === card.category ? 'selected' : ''}>${c}</option>`
       ).join('');
+
       el.innerHTML = `
         <button class="delete-btn" onclick="deleteCard(${card.id})" title="Supprimer">✕</button>
         <img src="${card.image}" onerror="this.src='https://via.placeholder.com/400x200?text=Brico'">
@@ -643,6 +650,669 @@
       container.appendChild(el);
     });
   }
+
+  function deleteCard(id) {
+    let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+    saved = saved.filter(item => item.id !== id);
+    localStorage.setItem('brico_items', JSON.stringify(saved));
+    loadSavedCards();
+  }
+</script>
+
+</body>
+</html><!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mes Projets Brico</title>
+  
+  <!-- Déclaration explicite du manifeste pour PWABuilder -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/png" href="./icon-192.png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <meta name="theme-color" content="#f8eeee">
+  <meta name="theme-color" content="#2563EB">
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+    :root {
+      --primary: #2563EB;
+      --primary-light: #EFF6FF;
+      --accent: #F59E0B;
+      --bg: #F8FAFC;
+      --surface: #FFFFFF;
+      --text: #0F172A;
+      --text-muted: #64748B;
+      --border: #E2E8F0;
+      --radius: 20px;
+    }
+
+    * { box-sizing: border-box; font-family: 'Plus Jakarta Sans', sans-serif; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      background-color: var(--bg);
+      background-image: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23cbd5e1' fill-opacity='0.15' fill-rule='evenodd'%3E%3Cpath d='M10 10h10v10H10V10zm20 20h10v10H30V30zm30-20h10v10H60V10zm-40 40h10v10H20V50zm40 0h10v10H60V50zM10 60h10v10H10V60zm40 0h10v10H50V60z'/%3E%3C/g%3E%3C/svg%3E");
+      margin: 0;
+      padding: 16px;
+      color: var(--text);
+    }
+
+    .app-container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding: 0 4px;
+    }
+
+    .app-title {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .app-title span {
+      background: linear-gradient(135deg, #2563EB, #1D4ED8);
+      color: white;
+      padding: 6px 12px;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .add-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .form-group { margin-bottom: 14px; }
+    label { font-weight: 700; font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1.5px solid var(--border);
+      border-radius: 14px;
+      font-size: 14px;
+      font-weight: 500;
+      background: var(--bg);
+      color: var(--text);
+      transition: all 0.2s ease;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      background: var(--surface);
+      box-shadow: 0 0 0 4px var(--primary-light);
+    }
+
+    textarea { resize: vertical; height: 70px; }
+
+    .ratings-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      background: var(--bg);
+      padding: 12px;
+      border-radius: 14px;
+      border: 1.5px solid var(--border);
+      margin-bottom: 16px;
+    }
+
+    .rating-box label { margin-bottom: 4px; font-size: 11px; }
+    .star-rating, .heart-rating { display: flex; gap: 4px; cursor: pointer; font-size: 18px; }
+    .star-rating span, .heart-rating span { opacity: 0.25; filter: grayscale(1); transition: 0.15s; }
+    .star-rating span.active, .heart-rating span.active { opacity: 1; filter: none; transform: scale(1.1); }
+    .btn-submit {
+      width: 100%;
+      padding: 14px;
+      background: var(--primary);
+      color: #ffffff;
+      border: none;
+      border-radius: 14px;
+      font-weight: 700;
+      font-size: 15px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+      transition: all 0.2s;
+    }
+    .btn-submit:hover { background: #1d4ed8; transform: translateY(-1px); }
+
+    .btn-add-cat {
+      background: var(--primary-light);
+      color: var(--primary);
+      border: none;
+      border-radius: 14px;
+      padding: 0 16px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 18px;
+      transition: 0.2s;
+    }
+    .btn-add-cat:hover { background: #dbeafe; }
+
+    .categories-bar {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+      margin-bottom: 20px;
+      scrollbar-width: none;
+    }
+    .categories-bar::-webkit-scrollbar { display: none; }
+
+    .cat-chip {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      padding: 8px 16px;
+      border-radius: 30px;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .cat-chip.active {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+    }
+
+    .btn-edit-cat { background: none; border: none; cursor: pointer; font-size: 11px; padding: 0; opacity: 0.7; }
+    .cat-chip.active .btn-edit-cat { filter: brightness(10); opacity: 1; }
+
+    #loader {
+      display: none;
+      text-align: center;
+      font-weight: 600;
+      color: var(--primary);
+      background: var(--primary-light);
+      padding: 12px;
+      border-radius: 14px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.6; }
+      50% { opacity: 1; }
+      100% { opacity: 0.6; }
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
+      display: flex;
+      flex-direction: column;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.08);
+    }
+    .card img {
+      width: 100%;
+      height: 150px;
+      object-fit: cover;
+      border-bottom: 1.5px solid var(--border);
+      background: #f1f5f9;
+    }
+
+    .card-body {
+      padding: 16px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card-badge-select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      font-weight: 700;
+      font-size: 11px;
+      border-radius: 8px;
+      padding: 4px 8px;
+      width: fit-content;
+      color: var(--primary);
+      cursor: pointer;
+    }
+
+    .card-title {
+      font-weight: 700;
+      color: var(--text);
+      text-decoration: none;
+      font-size: 15px;
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .card-title:hover { color: var(--primary); }
+
+    .card-notes {
+      background: var(--bg);
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .card-notes:hover { background: #f1f5f9; color: var(--text); }
+
+    .card-ratings {
+      margin-top: auto;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .clickable-rating {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+    .clickable-rating:hover {
+      background: var(--primary-light);
+      border-color: var(--primary);
+    }
+
+    .delete-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(4px);
+      color: #ffffff;
+      border: none;
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+      z-index: 2;
+    }
+    .delete-btn:hover { background: #ef4444; }
+  </style>
+</head>
+<body>
+
+<div class="app-container">
+  <header>
+    <div class="app-title">
+      🛠️ BricoBoard <span>2026</span>
+    </div>
+  </header>
+
+  <div class="add-card">
+    <div class="form-group">
+      <label>🔗 URL du projet</label>
+      <input type="url" id="urlInput" placeholder="https://..." autocomplete="off">
+    </div>
+
+    <div class="form-group">
+      <label>📁 Catégorie</label>
+      <div class="form-row">
+        <select id="catSelect"></select>
+        <button class="btn-add-cat" onclick="addNewCategory()">+</button>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>📝 Note ou remarque</label>
+      <textarea id="noteInput" placeholder="Ex: Prévoir des chevilles M6 et de l'enduit..."></textarea>
+    </div>
+
+    <div class="ratings-container">
+      <div class="rating-box">
+        <label>⭐ Difficulté</label>
+        <div class="star-rating" id="starPicker">
+          <span onclick="setRating('star', 1)">⭐</span>
+          <span onclick="setRating('star', 2)">⭐</span>
+          <span onclick="setRating('star', 3)">⭐</span>
+          <span onclick="setRating('star', 4)">⭐</span>
+          <span onclick="setRating('star', 5)">⭐</span>
+        </div>
+      </div>
+      <div class="rating-box">
+        <label>❤️ Coup de cœur</label>
+        <div class="heart-rating" id="heartPicker">
+          <span onclick="setRating('heart', 1)">❤️</span>
+          <span onclick="setRating('heart', 2)">❤️</span>
+          <span onclick="setRating('heart', 3)">❤️</span>
+          <span onclick="setRating('heart', 4)">❤️</span>
+          <span onclick="setRating('heart', 5)">❤️</span>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn-submit" onclick="manualAdd()">✨ Enregistrer le projet</button>
+  </div>
+
+  <div id="loader">⚡ Analyse de la page et capture en cours...</div>
+  <div class="categories-bar" id="categoriesBar"></div>
+  <div class="grid" id="cardsContainer"></div>
+</div>
+
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').then(reg => {
+        console.log('Service Worker enregistré:', reg.scope);
+      }).catch(err => {
+        console.error('Échec enregistrement SW:', err);
+      });
+    });
+  }
+
+  // Réception d'un contenu partagé depuis Android (via share.html)
+  function handleIncomingShare() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('shared') !== '1') return;
+
+    const raw = localStorage.getItem('brico_shared_payload');
+    if (!raw) return;
+
+    try {
+      const shared = JSON.parse(raw);
+      // Android envoie souvent l'URL dans "text" ou "url" selon l'app source
+      const candidateUrl = shared.url || extractUrlFromText(shared.text) || shared.text;
+      if (candidateUrl) {
+        addBricoLink(candidateUrl.trim());
+      }
+    } catch (e) {
+      console.error('Erreur lecture partage', e);
+    } finally {
+      localStorage.removeItem('brico_shared_payload');
+      // Nettoie l'URL pour éviter un re-ajout si l'utilisateur recharge la page
+      window.history.replaceState({}, document.title, '/index.html');
+    }
+  }
+
+  function extractUrlFromText(text) {
+    if (!text) return null;
+    const match = text.match(/https?:\/\/[^\s]+/);
+    return match ? match[0] : null;
+  }
+
+  window.addEventListener('DOMContentLoaded', handleIncomingShare);
+
+  let categories = JSON.parse(localStorage.getItem('brico_cats')) || ['🔨 Général', '🪚 Menuiserie', '⚡ Électricité', '🎨 Peinture'];
+  let currentDifficulty = 3;
+  let currentHeart = 4;
+  let activeFilter = 'Tous';
+
+  document.addEventListener('DOMContentLoaded', () => {
+    initRatings();
+    renderCategories();
+    loadSavedCards();
+    handleSharedUrl();
+  });
+
+  function initRatings() {
+    setRating('star', currentDifficulty);
+    setRating('heart', currentHeart);
+  }
+
+  function setRating(type, val) {
+    if (type === 'star') currentDifficulty = val;
+    if (type === 'heart') currentHeart = val;
+
+    const container = document.getElementById(type === 'star' ? 'starPicker' : 'heartPicker');
+    Array.from(container.children).forEach((el, idx) => {
+      if (idx < val) el.classList.add('active');
+      else el.classList.remove('active');
+    });
+  }
+
+  function renderCategories() {
+    localStorage.setItem('brico_cats', JSON.stringify(categories));
+    const select = document.getElementById('catSelect');
+    const bar = document.getElementById('categoriesBar');
+
+    select.innerHTML = categories.map(c => `<option value="${c}">${c}</option>`).join('');
+    bar.innerHTML = `<div class="cat-chip ${activeFilter === 'Tous' ? 'active' : ''}" onclick="filterCat('Tous')">Tous</div>` + 
+      categories.map((c, i) => `
+        <div class="cat-chip ${activeFilter === c ? 'active' : ''}" onclick="filterCat('${c}')">
+          ${c}
+          <button class="btn-edit-cat" onclick="editCat(event, ${i})">✏️</button>
+        </div>
+      `).join('');
+  }
+
+  function addNewCategory() {
+    const name = prompt("Nom de la nouvelle catégorie :");
+    if (name && name.trim()) {
+      categories.push("🛠️ " + name.trim());
+      renderCategories();
+    }
+  }
+  function editCat(e, index) {
+    e.stopPropagation();
+    const newName = prompt("Modifier la catégorie :", categories[index]);
+    if (newName && newName.trim()) {
+      const oldName = categories[index];
+      categories[index] = newName.trim();
+      let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+      saved.forEach(item => { if (item.category === oldName) item.category = newName.trim(); });
+      localStorage.setItem('brico_items', JSON.stringify(saved));
+      renderCategories();
+      loadSavedCards();
+    }
+  }
+
+  function filterCat(cat) {
+    activeFilter = cat;
+    renderCategories();
+    loadSavedCards();
+  }
+
+  function handleSharedUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const rawText = params.get('url') || params.get('text') || params.get('title');
+    if (rawText) {
+      const match = rawText.match(/(https?:\/\/[^\s]+)/);
+      if (match) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        addBricoLink(match[0]);
+      }
+    }
+  }
+
+  function manualAdd() {
+    const input = document.getElementById('urlInput');
+    if (input.value.trim()) {
+      addBricoLink(input.value.trim());
+      input.value = '';
+      document.getElementById('noteInput').value = '';
+    }
+  }
+
+  async function addBricoLink(url) {
+    const loader = document.getElementById('loader');
+    loader.style.display = 'block';
+
+    // Image de secours locale (SVG en base64) si microlink échoue, plutôt que de dépendre
+    // d'un deuxième service tiers instable (thum.io affichait un captcha en usage gratuit).
+    let imageUrl = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="%23895353"/><text x="300" y="200" font-size="28" fill="%23f8eeee" text-anchor="middle" font-family="Arial">Aperçu indisponible</text></svg>'
+    );
+    let title = 'Projet Brico';
+
+    try {
+      const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(url)}&screenshot=true&meta=true`);
+      const result = await res.json();
+      if (result.status === 'success' && result.data) {
+        if (result.data.title) title = result.data.title;
+        if (result.data.screenshot && result.data.screenshot.url) imageUrl = result.data.screenshot.url;
+        else if (result.data.image && result.data.image.url) imageUrl = result.data.image.url;
+      }
+    } catch (e) {
+      console.warn('Aperçu microlink indisponible, image de secours utilisée', e);
+    }
+
+    const card = {
+      id: Date.now(),
+      url: url,
+      title: title,
+      category: document.getElementById('catSelect').value,
+      note: document.getElementById('noteInput').value.trim(),
+      difficulty: currentDifficulty,
+      hearts: currentHeart,
+      image: imageUrl
+    };
+
+    saveCard(card);
+    loadSavedCards();
+    loader.style.display = 'none';
+  }
+
+  function saveCard(card) {
+    const saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+    saved.unshift(card);
+    localStorage.setItem('brico_items', JSON.stringify(saved));
+  }
+
+  function updateCardCategory(id, newCat) {
+    let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+    const card = saved.find(item => item.id === id);
+    if (card) {
+      card.category = newCat;
+      localStorage.setItem('brico_items', JSON.stringify(saved));
+    }
+  }
+
+  function editNote(id) {
+    let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+    const card = saved.find(item => item.id === id);
+    if (card) {
+      const newNote = prompt("Modifier la note :", card.note || "");
+      if (newNote !== null) {
+        card.note = newNote.trim();
+        localStorage.setItem('brico_items', JSON.stringify(saved));
+        loadSavedCards();
+      }
+    }
+  }
+
+  function editDifficulty(id) {
+    let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+    const card = saved.find(item => item.id === id);
+    if (card) {
+      const val = prompt("Modifier la difficulté (1 à 5 ⭐) :", card.difficulty);
+      const num = parseInt(val);
+      if (!isNaN(num) && num >= 1 && num <= 5) {
+        card.difficulty = num;
+        localStorage.setItem('brico_items', JSON.stringify(saved));
+        loadSavedCards();
+      }
+    }
+  }
+
+  function editHearts(id) {
+    let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+    const card = saved.find(item => item.id === id);
+    if (card) {
+      const val = prompt("Modifier le coup de cœur (1 à 5 ❤️) :", card.hearts);
+      const num = parseInt(val);
+      if (!isNaN(num) && num >= 1 && num <= 5) {
+        card.hearts = num;
+        localStorage.setItem('brico_items', JSON.stringify(saved));
+        loadSavedCards();
+      }
+    }
+  }
+
+  function loadSavedCards() {
+    const container = document.getElementById('cardsContainer');
+    container.innerHTML = '';
+    let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+
+    if (activeFilter !== 'Tous') {
+      saved = saved.filter(item => item.category === activeFilter);
+    }
+
+    saved.forEach(card => {
+      const el = document.createElement('div');
+      el.className = 'card';
+      
+      const catOptions = categories.map(c => 
+        `<option value="${c}" ${c === card.category ? 'selected' : ''}>${c}</option>`
+      ).join('');
+
+      el.innerHTML = `
+        <button class="delete-btn" onclick="deleteCard(${card.id})" title="Supprimer">✕</button>
+        <img src="${card.image}" onerror="this.src='https://via.placeholder.com/400x200?text=Brico'">
+        <div class="card-body">
+          <select class="card-badge-select" onchange="updateCardCategory(${card.id}, this.value)">
+            ${catOptions}
+          </select>
+          <a href="${card.url}" target="_blank" class="card-title">${card.title}</a>
+          <div class="card-notes" onclick="editNote(${card.id})" title="Cliquer pour modifier la note">
+            📝 ${card.note ? card.note : '<em>Ajouter une note...</em>'}
+          </div>
+          <div class="card-ratings">
+            <span class="clickable-rating" onclick="editDifficulty(${card.id})" title="Modifier la difficulté">Diff. ${'⭐'.repeat(card.difficulty || 1)}</span>
+            <span class="clickable-rating" onclick="editHearts(${card.id})" title="Modifier le coup de cœur">${'❤️'.repeat(card.hearts || 1)}</span>
+          </div>
+        </div>
+      `;
+      container.appendChild(el);
+    });
+  }
+
   function deleteCard(id) {
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     saved = saved.filter(item => item.id !== id);
