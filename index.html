@@ -675,59 +675,51 @@
     }
   }
 
-  // Capture manuelle de l'écran via l'API native du navigateur, utilisée en secours
-  // quand la capture automatique (Microlink) échoue (site bloqué, quota dépassé...).
-  // L'utilisateur choisit lui-même l'onglet/écran à capturer via la popup système.
-  async function captureManually(cardId) {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      alert("La capture d'écran manuelle n'est pas prise en charge par ce navigateur.");
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      const track = stream.getVideoTracks()[0];
-      const imageCapture = 'ImageCapture' in window ? new ImageCapture(track) : null;
+  // Import d'image manuel : plus fiable que getDisplayMedia() (mal supporté sur
+  // Chrome Android). L'utilisateur choisit une photo depuis sa galerie, ou prend
+  // une nouvelle capture d'écran via son téléphone puis l'importe ici.
+  function captureManually(cardId) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
 
-      let bitmap;
-      if (imageCapture) {
-        bitmap = await imageCapture.grabFrame();
-      } else {
-        // Fallback : capture une frame via un <video> temporaire
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        await video.play();
-        await new Promise(r => setTimeout(r, 300));
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        canvas.getContext('2d').drawImage(video, 0, 0);
-        bitmap = canvas;
-      }
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        // Redimensionne l'image pour éviter de saturer le localStorage avec des photos trop lourdes
+        const img = new Image();
+        img.onload = () => {
+          const maxWidth = 800;
+          const scale = Math.min(1, maxWidth / img.width);
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width * scale;
+          canvas.height = img.height * scale;
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
 
-      const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      canvas.getContext('2d').drawImage(bitmap, 0, 0);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          const saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+          const idx = saved.findIndex(c => c.id === cardId);
+          if (idx !== -1) {
+            saved[idx].image = dataUrl;
+            localStorage.setItem('brico_items', JSON.stringify(saved));
+            loadSavedCards();
+          }
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    };
 
-      track.stop();
-
-      const saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
-      const idx = saved.findIndex(c => c.id === cardId);
-      if (idx !== -1) {
-        saved[idx].image = dataUrl;
-        localStorage.setItem('brico_items', JSON.stringify(saved));
-        loadSavedCards();
-      }
-    } catch (e) {
-      console.warn('Capture manuelle annulée ou échouée', e);
-    }
+    input.click();
   }
 
   function loadSavedCards() {
     const container = document.getElementById('cardsContainer');
     container.innerHTML = '';
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+
     if (activeFilter !== 'Tous') {
       saved = saved.filter(item => item.category === activeFilter);
     }
@@ -746,9 +738,9 @@
           <img src="${card.image}" data-original-src="${card.image}" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='flex';">
           <div class="capture-fallback" style="display:none;">
             <span>📷 Aperçu indisponible</span>
-            <button class="capture-btn" onclick="captureManually(${card.id})">Capturer l'écran</button>
+            <button class="capture-btn" onclick="captureManually(${card.id})">Choisir une image</button>
           </div>
-          <button class="recapture-btn" onclick="captureManually(${card.id})" title="Remplacer par une vraie capture d'écran">🔄 Recapturer</button>
+          <button class="recapture-btn" onclick="captureManually(${card.id})" title="Remplacer par une image de votre choix">🖼️ Changer l'image</button>
         </div>
         <div class="card-body">
           <select class="card-badge-select" onchange="updateCardCategory(${card.id}, this.value)">
