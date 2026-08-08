@@ -604,9 +604,20 @@
 
     // Tentative 1 : Microlink, en JSON complet pour pouvoir vérifier le résultat
     // avant de l'utiliser (titre + image), au lieu de l'injecter en aveugle.
+    // styles= masque agressivement les bannières de cookies/consentement les plus
+    // courantes par CSS, en complément de adblock=true (qui ne les bloque pas toujours
+    // si elles apparaissent après un délai JS plutôt qu'au chargement initial).
+    const hideBannersCss = [
+      '[class*="cookie" i], [id*="cookie" i]',
+      '[class*="consent" i], [id*="consent" i]',
+      '[class*="gdpr" i], [id*="gdpr" i]',
+      '[class*="banner" i][class*="cookie" i]',
+      '.cmp-container, #cmp-container, .cc-window, .cc-banner'
+    ].join(', ') + ' { display: none !important; visibility: hidden !important; }';
+
     try {
       const res = await fetch(
-        `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2`
+        `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2&styles=${encodeURIComponent(hideBannersCss)}`
       );
       const result = await res.json();
       if (result.status === 'success' && result.data) {
@@ -708,6 +719,7 @@
       }
     }
   }
+
   // Import d'image manuel : plus fiable que getDisplayMedia() (mal supporté sur
   // Chrome Android). L'utilisateur choisit une photo depuis sa galerie, ou prend
   // une nouvelle capture d'écran via son téléphone puis l'importe ici.
