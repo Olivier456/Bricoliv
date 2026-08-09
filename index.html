@@ -722,7 +722,12 @@
       if (candidateTitle && !looksLikeBlockedPage(candidateTitle)) {
         title = candidateTitle;
       }
-      if (candidateImage) {
+      // On ne fait confiance à l'image que si le titre associé n'a PAS l'air
+      // d'une page de blocage : Microlink peut techniquement "réussir" une capture
+      // tout en photographiant une page "Accès interdit" (WAF du site cible, ou
+      // protection de Microlink lui-même). Une image de ce type est trompeuse,
+      // mieux vaut basculer sur mshots plutôt que de l'afficher comme si de rien.
+      if (candidateImage && !looksLikeBlockedPage(candidateTitle)) {
         imageUrl = candidateImage;
       }
     }
@@ -732,23 +737,36 @@
       title = jinaTitle;
     }
 
-    // Tentative de secours pour l'image : si Microlink n'a rien donné d'exploitable,
-    // on essaie mshots (moteur de capture différent, peut réussir là où l'autre échoue).
+    // Tentative de secours pour l'image : si Microlink n'a rien donné d'exploitable
+    // (ou a été écarté comme page de blocage), on essaie mshots.
     if (!imageUrl) {
       imageUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=600&h=400`;
     }
 
     // L'URL renvoyée peut pointer vers une image encore en cours de génération
-    // côté serveur. On précharge donc l'image en mémoire ici, avec plusieurs
-    // tentatives, avant de l'utiliser, pour être sûr qu'elle s'affiche du premier coup.
-    imageUrl = await preloadImageWithRetry(imageUrl);
+    // côté serveur, ou vers un fichier corrompu/indécodable (icône de document
+    // cassé de Chrome). On précharge donc l'image en mémoire ici en vérifiant
+    // aussi ses dimensions réelles, avant de l'utiliser, pour être sûr qu'elle
+    // s'affiche correctement du premier coup.
+    const preloadedImage = await preloadImageWithRetry(imageUrl);
+    const imageFailed = !preloadedImage;
+
+    // Si le préchargement a définitivement échoué, on utilise un SVG généré
+    // localement plutôt qu'une URL cassée : ça garantit un affichage propre
+    // sans dépendre d'un "onerror" qui pourrait ne jamais se déclencher.
+    const finalImageUrl = imageFailed
+      ? 'data:image/svg+xml;utf8,' + encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="%23895353"/><text x="300" y="200" font-size="24" fill="%23f8eeee" text-anchor="middle" font-family="Arial">Aperçu indisponible</text></svg>'
+        )
+      : preloadedImage;
 
     return {
       title: title || fallbackTitleFromUrl(url),
-      imageUrl: imageUrl,
-      needsManualImage: !title
+      imageUrl: finalImageUrl,
+      needsManualImage: !title || imageFailed
     };
   }
+
 
   async function addBricoLink(url) {
     const loader = document.getElementById('loader');
@@ -825,16 +843,29 @@
             resolve(preloadImageWithRetry(url, attempt + 1, maxAttempts));
           }, attempt * 800);
         } else {
-          // On abandonne le préchargement après plusieurs essais, mais on renvoie
-          // quand même l'URL d'origine : le badge "À vérifier" + bouton d'import
-          // manuel prendront le relais si elle ne charge vraiment jamais.
-          resolve(url);
+          // On abandonne le préchargement après plusieurs essais. On renvoie null
+          // plutôt que l'URL cassée : certains formats corrompus ne déclenchent
+          // jamais "onerror" une fois insérés dans le DOM final (c'est justement
+          // ce qui produisait l'icône de document cassé), donc on préfère forcer
+          // directement l'affichage du bouton d'import manuel plutôt que de
+          // dépendre d'un événement qui ne se déclenchera peut-être pas.
+          resolve(null);
         }
       }
 
       img.onload = () => {
         clearTimeout(timeoutId);
-        resolve(bustedUrl);
+        // Certaines réponses corrompues ou au mauvais format déclenchent quand
+        // même "onload" dans certains navigateurs, sans que l'image soit
+        // réellement décodable (c'est ce qui produit l'icône de document cassé
+        // de Chrome au lieu de l'image attendue). On vérifie donc les dimensions
+        // réelles de l'image chargée : si elles sont nulles, on considère que
+        // le chargement a échoué et on relance une tentative.
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          resolve(bustedUrl);
+        } else {
+          tryNextOrGiveUp();
+        }
       };
       img.onerror = () => {
         clearTimeout(timeoutId);
@@ -907,7 +938,6 @@
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return;
@@ -937,6 +967,7 @@
       };
       reader.readAsDataURL(file);
     };
+
     input.click();
   }
 
@@ -948,7 +979,6 @@
     if (activeFilter !== 'Tous') {
       saved = saved.filter(item => item.category === activeFilter);
     }
-
     saved.forEach(card => {
       const el = document.createElement('div');
       el.className = 'card';
