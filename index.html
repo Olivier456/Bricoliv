@@ -291,6 +291,22 @@
     }
     .recapture-btn:hover { background: rgba(0,0,0,0.75); }
 
+    .regenerate-btn {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      background: rgba(0,0,0,0.55);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      backdrop-filter: blur(2px);
+    }
+    .regenerate-btn:hover { background: rgba(0,0,0,0.75); }
+    .regenerate-btn:disabled { opacity: 0.6; cursor: default; }
+
     .verify-badge {
       position: absolute;
       top: 8px;
@@ -310,6 +326,7 @@
       flex-direction: column;
       gap: 10px;
     }
+
     .card-badge-select {
       background: var(--bg);
       border: 1px solid var(--border);
@@ -356,7 +373,6 @@
       font-size: 13px;
       font-weight: 600;
     }
-
     .clickable-rating {
       cursor: pointer;
       padding: 2px 6px;
@@ -545,7 +561,6 @@
       renderCategories();
     }
   }
-
   function editCat(e, index) {
     e.stopPropagation();
     const newName = prompt("Modifier la catégorie :", categories[index]);
@@ -589,18 +604,44 @@
 
   // Détecte si le titre/contenu récupéré ressemble à une page de vérification,
   // de blocage ou d'erreur plutôt qu'au vrai contenu du site (Cloudflare, pare-feu...).
+  // L'image générée par Microlink peut mettre quelques secondes à être vraiment
+  // disponible côté serveur même si l'URL est renvoyée immédiatement. Plutôt que de
+  // forcer l'utilisateur à recharger toute l'app, on réessaie automatiquement le
+  // chargement plusieurs fois avec des délais progressifs avant d'abandonner.
+  function retryImageLoad(imgEl) {
+    const attempts = parseInt(imgEl.getAttribute('data-retry-count') || '0', 10);
+    const maxAttempts = 5;
+    const delays = [1500, 2500, 4000, 6000, 8000]; // en millisecondes
+
+    if (attempts < maxAttempts) {
+      imgEl.setAttribute('data-retry-count', attempts + 1);
+      setTimeout(() => {
+        // On force un nouveau chargement réseau (pas depuis le cache navigateur)
+        const src = imgEl.getAttribute('data-original-src');
+        imgEl.src = '';
+        imgEl.src = src;
+      }, delays[attempts]);
+    } else {
+      // Après plusieurs échecs, on abandonne et on affiche le bouton d'import manuel.
+      imgEl.onerror = null;
+      imgEl.style.display = 'none';
+      if (imgEl.nextElementSibling) {
+        imgEl.nextElementSibling.style.display = 'flex';
+      }
+    }
+  }
+
   function looksLikeBlockedPage(text) {
     if (!text) return false;
     return /access denied|403 forbidden|blocked|attention required|just a moment|verifying you|verifying your browser|erreur 403|cloudflare|checking your browser|are you human|robot check/i.test(text);
   }
 
-  async function addBricoLink(url) {
-    const loader = document.getElementById('loader');
-    loader.style.display = 'block';
-
+  // Récupère automatiquement un aperçu (titre + image) pour une URL donnée.
+  // Réutilisée à la fois pour l'ajout d'un nouveau projet et pour le bouton
+  // "Régénérer l'aperçu" sur une carte déjà existante.
+  async function fetchAutoScreenshot(url) {
     let imageUrl = null;
-    let title = 'Projet Brico';
-    let needsManualImage = false;
+    let title = null;
 
     // Tentative 1 : Microlink, en JSON complet pour pouvoir vérifier le résultat
     // avant de l'utiliser (titre + image), au lieu de l'injecter en aveugle.
@@ -658,11 +699,23 @@
       imageUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=600&h=400`;
     }
 
-    // Si même le titre n'a pas pu être récupéré proprement, on considère que
-    // l'aperçu est incertain et on le signale visuellement (bouton d'import visible).
-    if (title === 'Projet Brico') {
-      needsManualImage = true;
-    }
+    // L'URL renvoyée peut pointer vers une image encore en cours de génération
+    // côté serveur. On précharge donc l'image en mémoire ici, avec plusieurs
+    // tentatives, avant de l'utiliser, pour être sûr qu'elle s'affiche du premier coup.
+    imageUrl = await preloadImageWithRetry(imageUrl);
+
+    return {
+      title: title || 'Projet Brico',
+      imageUrl: imageUrl,
+      needsManualImage: !title
+    };
+  }
+
+  async function addBricoLink(url) {
+    const loader = document.getElementById('loader');
+    loader.style.display = 'block';
+
+    const { title, imageUrl, needsManualImage } = await fetchAutoScreenshot(url);
 
     const card = {
       id: Date.now(),
@@ -675,10 +728,78 @@
       image: imageUrl,
       needsManualImage: needsManualImage
     };
-
     saveCard(card);
     loadSavedCards();
     loader.style.display = 'none';
+  }
+
+  // Régénère l'aperçu automatique d'une carte déjà enregistrée, sans avoir besoin
+  // de supprimer/recréer le projet. Utile si le premier essai a échoué (site
+  // temporairement bloqué, quota Microlink dépassé, etc.).
+  async function regenerateImage(cardId) {
+    const saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+    const card = saved.find(c => c.id === cardId);
+    if (!card) return;
+
+    const btn = document.querySelector(`.regenerate-btn[data-card-id="${cardId}"]`);
+    if (btn) { btn.textContent = '⏳ Régénération...'; btn.disabled = true; }
+
+    const { title, imageUrl, needsManualImage } = await fetchAutoScreenshot(card.url);
+
+    const idx = saved.findIndex(c => c.id === cardId);
+    if (idx !== -1) {
+      saved[idx].image = imageUrl;
+      saved[idx].needsManualImage = needsManualImage;
+      // On ne remplace le titre que s'il n'a jamais été correctement récupéré
+      // (évite d'écraser un titre déjà bon par un moins bon en cas de nouvel échec).
+      if (saved[idx].title === 'Projet Brico' && title !== 'Projet Brico') {
+        saved[idx].title = title;
+      }
+      localStorage.setItem('brico_items', JSON.stringify(saved));
+      loadSavedCards();
+    }
+  }
+
+
+  // Précharge une image en mémoire avant de l'utiliser, avec plusieurs tentatives :
+  // certains services de capture renvoient une URL valide avant que l'image ne soit
+  // réellement prête côté serveur. On réessaie avec un délai croissant (bust de cache
+  // via un paramètre aléatoire) plutôt que d'afficher une image cassée au premier essai.
+  function preloadImageWithRetry(url, attempt = 1, maxAttempts = 4) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const separator = url.includes('?') ? '&' : '?';
+      const bustedUrl = attempt === 1 ? url : `${url}${separator}_retry=${attempt}-${Date.now()}`;
+
+      const timeoutId = setTimeout(() => {
+        img.onload = null;
+        img.onerror = null;
+        tryNextOrGiveUp();
+      }, 4000);
+
+      function tryNextOrGiveUp() {
+        if (attempt < maxAttempts) {
+          setTimeout(() => {
+            resolve(preloadImageWithRetry(url, attempt + 1, maxAttempts));
+          }, attempt * 800);
+        } else {
+          // On abandonne le préchargement après plusieurs essais, mais on renvoie
+          // quand même l'URL d'origine : le badge "À vérifier" + bouton d'import
+          // manuel prendront le relais si elle ne charge vraiment jamais.
+          resolve(url);
+        }
+      }
+
+      img.onload = () => {
+        clearTimeout(timeoutId);
+        resolve(bustedUrl);
+      };
+      img.onerror = () => {
+        clearTimeout(timeoutId);
+        tryNextOrGiveUp();
+      };
+      img.src = bustedUrl;
+    });
   }
 
   function saveCard(card) {
@@ -708,6 +829,7 @@
       }
     }
   }
+
   function editDifficulty(id) {
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     const card = saved.find(item => item.id === id);
@@ -773,7 +895,6 @@
       };
       reader.readAsDataURL(file);
     };
-
     input.click();
   }
 
@@ -797,12 +918,13 @@
       el.innerHTML = `
         <button class="delete-btn" onclick="deleteCard(${card.id})" title="Supprimer">✕</button>
         <div class="card-img-wrap">
-          <img src="${card.image}" data-original-src="${card.image}" onerror="this.onerror=null; this.style.display='none'; this.nextElementSibling.style.display='flex';">
+          <img src="${card.image}" data-original-src="${card.image}" data-retry-count="0" onerror="retryImageLoad(this);">
           <div class="capture-fallback" style="display:none;">
             <span>📷 Aperçu indisponible</span>
             <button class="capture-btn" onclick="captureManually(${card.id})">Choisir une image</button>
           </div>
           ${card.needsManualImage ? '<div class="verify-badge" title="Aperçu à vérifier, le site a peut-être bloqué la capture automatique">⚠️ À vérifier</div>' : ''}
+          <button class="regenerate-btn" data-card-id="${card.id}" onclick="regenerateImage(${card.id})" title="Régénérer l'aperçu automatique">🔄 Régénérer</button>
           <button class="recapture-btn" onclick="captureManually(${card.id})" title="Remplacer par une image de votre choix">🖼️ Changer l'image</button>
         </div>
         <div class="card-body">
