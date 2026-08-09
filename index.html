@@ -636,6 +636,37 @@
     return /access denied|403 forbidden|blocked|attention required|just a moment|verifying you|verifying your browser|erreur 403|cloudflare|checking your browser|are you human|robot check/i.test(text);
   }
 
+  // Récupère le titre réel de la page via Jina Reader (r.jina.ai), un service
+  // indépendant de Microlink avec ses propres limites (20 req/min sans clé),
+  // donc utilisable même quand le quota Microlink du jour est épuisé.
+  async function fetchTitleViaJina(url) {
+    try {
+      const res = await fetch(`https://r.jina.ai/${url}`, {
+        headers: { 'Accept': 'application/json' }
+      });
+      const result = await res.json();
+      const candidateTitle = result && result.data && result.data.title ? result.data.title.trim() : '';
+      if (candidateTitle && !looksLikeBlockedPage(candidateTitle)) {
+        return candidateTitle;
+      }
+    } catch (e) {
+      console.warn('Jina Reader indisponible pour le titre', e);
+    }
+    return null;
+  }
+
+  // Dernier recours si aucun service n'a pu récupérer le vrai titre de la page :
+  // on affiche au moins le nom du site plutôt qu'un "Projet Brico" complètement
+  // générique, pour que la carte reste identifiable au premier coup d'œil.
+  function fallbackTitleFromUrl(url) {
+    try {
+      const host = new URL(url).hostname.replace(/^www\./, '');
+      return host || 'Projet Brico';
+    } catch (e) {
+      return 'Projet Brico';
+    }
+  }
+
   // Récupère automatiquement un aperçu (titre + image) pour une URL donnée.
   // Réutilisée à la fois pour l'ajout d'un nouveau projet et pour le bouton
   // "Régénérer l'aperçu" sur une carte déjà existante.
@@ -649,52 +680,60 @@
     // de consentement modernes (Axeptio, Didomi, OneTrust...) sont souvent construites
     // en Shadow DOM, une isolation que le CSS global ne peut pas traverser. Le JS,
     // lui, peut cibler et supprimer l'élément hôte directement, contournant la barrière.
+    // On lance en parallèle une requête Jina Reader pour le titre : ce service a ses
+    // propres limites indépendantes de Microlink, donc il sert de secours fiable
+    // si le quota gratuit Microlink du jour est épuisé (cause la plus fréquente
+    // d'un titre qui reste bloqué sur "Projet Brico").
+    // IMPORTANT : le paramètre `modules` de Microlink accepte un tableau de scripts
+    // séparés par des virgules. Toute virgule présente dans notre script (ex: un
+    // tableau JS classique) risque d'être interprétée comme un séparateur et de
+    // fragmenter le code en morceaux invalides, faisant échouer toute la requête
+    // (pas seulement le nettoyage des bannières). On évite donc strictement toute
+    // virgule : les sélecteurs sont listés dans une seule chaîne séparée par "|".
     const removeBannersJs = `
       (function() {
-        var hostSelectors = [
-          'axeptio-widget', '#axeptio_overlay', '.axeptio_widget',
-          '#onetrust-banner-sdk', '#onetrust-consent-sdk', '.optanon-alert-box-wrapper', '.ot-sdk-container',
-          '#didomi-host', '.didomi-notice-banner', '.didomi-popup-container',
-          '#CybotCookiebotDialog', '#CybotCookiebotDialogBodyUnderlay',
-          '.qc-cmp2-container', '.qc-cmp2-summary-buttons',
-          '#truste-consent-track', '#truste-consent-content',
-          '.cc-window', '.cc-banner',
-          '[class*="cookie" i]', '[id*="cookie" i]',
-          '[class*="consent" i]', '[id*="consent" i]',
-          '[class*="gdpr" i]', '[id*="gdpr" i]',
-          '[class*="cmp-" i]', '[id*="cmp-" i]'
-        ];
-        hostSelectors.forEach(function(sel) {
+        var raw = 'axeptio-widget|#axeptio_overlay|.axeptio_widget|#onetrust-banner-sdk|#onetrust-consent-sdk|.optanon-alert-box-wrapper|.ot-sdk-container|#didomi-host|.didomi-notice-banner|.didomi-popup-container|#CybotCookiebotDialog|#CybotCookiebotDialogBodyUnderlay|.qc-cmp2-container|.qc-cmp2-summary-buttons|#truste-consent-track|#truste-consent-content|.cc-window|.cc-banner|[class*="cookie" i]|[id*="cookie" i]|[class*="consent" i]|[id*="consent" i]|[class*="gdpr" i]|[id*="gdpr" i]|[class*="cmp-" i]|[id*="cmp-" i]';
+        var hostSelectors = raw.split('|');
+        for (var i = 0; i < hostSelectors.length; i++) {
           try {
-            document.querySelectorAll(sel).forEach(function(el) { el.remove(); });
+            var found = document.querySelectorAll(hostSelectors[i]);
+            for (var j = 0; j < found.length; j++) { found[j].remove(); }
           } catch (e) {}
-        });
+        }
         document.body.style.overflow = 'auto';
       })();
     `;
 
-    try {
-      const res = await fetch(
-        `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2&waitForTimeout=1500&modules=${encodeURIComponent(removeBannersJs)}`
-      );
-      const result = await res.json();
-      if (result.status === 'success' && result.data) {
-        const candidateTitle = (result.data.title || '').trim();
-        const candidateImage = result.data.screenshot && result.data.screenshot.url;
+    const microlinkPromise = fetch(
+      `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2&waitForTimeout=1500&modules=${encodeURIComponent(removeBannersJs)}`
+    ).then(res => res.json()).catch(e => {
+      console.warn('Microlink indisponible', e);
+      return null;
+    });
 
-        if (candidateTitle && !looksLikeBlockedPage(candidateTitle)) {
-          title = candidateTitle;
-        }
-        if (candidateImage) {
-          imageUrl = candidateImage;
-        }
+    const jinaTitlePromise = fetchTitleViaJina(url);
+
+    const [microlinkResult, jinaTitle] = await Promise.all([microlinkPromise, jinaTitlePromise]);
+
+    if (microlinkResult && microlinkResult.status === 'success' && microlinkResult.data) {
+      const candidateTitle = (microlinkResult.data.title || '').trim();
+      const candidateImage = microlinkResult.data.screenshot && microlinkResult.data.screenshot.url;
+
+      if (candidateTitle && !looksLikeBlockedPage(candidateTitle)) {
+        title = candidateTitle;
       }
-    } catch (e) {
-      console.warn('Microlink indisponible, tentative avec le service de secours', e);
+      if (candidateImage) {
+        imageUrl = candidateImage;
+      }
     }
 
-    // Tentative 2 : si Microlink n'a pas donné d'image exploitable, on essaie mshots
-    // (moteur de capture différent, peut réussir là où Microlink échoue).
+    // Si Microlink n'a pas donné de titre exploitable, on utilise celui de Jina.
+    if (!title && jinaTitle) {
+      title = jinaTitle;
+    }
+
+    // Tentative de secours pour l'image : si Microlink n'a rien donné d'exploitable,
+    // on essaie mshots (moteur de capture différent, peut réussir là où l'autre échoue).
     if (!imageUrl) {
       imageUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=600&h=400`;
     }
@@ -705,7 +744,7 @@
     imageUrl = await preloadImageWithRetry(imageUrl);
 
     return {
-      title: title || 'Projet Brico',
+      title: title || fallbackTitleFromUrl(url),
       imageUrl: imageUrl,
       needsManualImage: !title
     };
@@ -728,6 +767,7 @@
       image: imageUrl,
       needsManualImage: needsManualImage
     };
+
     saveCard(card);
     loadSavedCards();
     loader.style.display = 'none';
@@ -750,9 +790,11 @@
     if (idx !== -1) {
       saved[idx].image = imageUrl;
       saved[idx].needsManualImage = needsManualImage;
-      // On ne remplace le titre que s'il n'a jamais été correctement récupéré
-      // (évite d'écraser un titre déjà bon par un moins bon en cas de nouvel échec).
-      if (saved[idx].title === 'Projet Brico' && title !== 'Projet Brico') {
+      // On ne remplace le titre que s'il ressemble encore à un titre de secours
+      // générique (nom de domaine ou "Projet Brico"), pour éviter d'écraser un
+      // vrai titre déjà récupéré par un moins bon en cas de nouvel échec partiel.
+      const currentLooksGeneric = saved[idx].title === 'Projet Brico' || saved[idx].title === fallbackTitleFromUrl(card.url);
+      if (currentLooksGeneric && title && title !== fallbackTitleFromUrl(card.url)) {
         saved[idx].title = title;
       }
       localStorage.setItem('brico_items', JSON.stringify(saved));
