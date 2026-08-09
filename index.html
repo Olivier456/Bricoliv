@@ -722,10 +722,48 @@
     }
   }
 
+  // Nettoie l'URL avant de l'envoyer aux services de capture : les longs
+  // paramètres de tracking publicitaire (clics Google Shopping, affiliation...)
+  // créent des sessions éphémères et des redirections qui perturbent souvent
+  // les services de capture automatique. On envoie une version "propre" aux
+  // services, tout en gardant l'URL d'origine intacte pour le clic de l'utilisateur.
+  function canonicalizeUrlForCapture(url) {
+    try {
+      const parsed = new URL(url);
+      // Cas spécial Amazon : on extrait le lien canonique du produit
+      // (domaine + /dp/ASIN), qui est bien plus stable pour la capture que
+      // l'URL complète avec ses paramètres de clic publicitaire.
+      const amazonMatch = parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i);
+      if (/amazon\./i.test(parsed.hostname) && amazonMatch) {
+        return `${parsed.protocol}//${parsed.hostname}/dp/${amazonMatch[1]}`;
+      }
+
+      // Cas général : on retire les paramètres de tracking connus, quel que
+      // soit le site, pour réduire les risques de blocage par les protections
+      // anti-bot (qui se méfient souvent des URLs porteuses de trackers publicitaires).
+      const trackingParams = [
+        'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+        'gclid', 'fbclid', 'msclkid', 'mcid', 'tag', 'linkCode', 'ref', 'ref_',
+        'psc', 'hvadid', 'hvpos', 'hvnetw', 'hvrand', 'hvpone', 'hvptwo',
+        'hvqmt', 'hvdev', 'hvdvcmdl', 'hvlocint', 'hvlocphy', 'hvtargid',
+        'hvocijid', 'hvexpln', 'asc_df'
+      ];
+      trackingParams.forEach(p => parsed.searchParams.delete(p));
+
+      return parsed.toString();
+    } catch (e) {
+      return url;
+    }
+  }
+
   // Récupère automatiquement un aperçu (titre + image) pour une URL donnée.
   // Réutilisée à la fois pour l'ajout d'un nouveau projet et pour le bouton
   // "Régénérer l'aperçu" sur une carte déjà existante.
   async function fetchAutoScreenshot(url) {
+    // On capture une version nettoyée de l'URL (sans les trackers publicitaires),
+    // mais on garde `url` (l'originale) pour tout ce qui n'est pas la capture.
+    const captureUrl = canonicalizeUrlForCapture(url);
+
     let imageUrl = null;
     let title = null;
 
@@ -733,7 +771,7 @@
     // blocage natif des bannières de cookies — beaucoup plus fiable qu'un nettoyage
     // JS artisanal. Retourne directement l'image (pas de JSON à parser), donc on
     // vérifie juste qu'elle est réellement chargeable plus bas via preloadImageWithRetry.
-    const screenshotOneUrl = buildScreenshotOneUrl(url);
+    const screenshotOneUrl = buildScreenshotOneUrl(captureUrl);
     if (screenshotOneUrl) {
       const preloadedS1 = await preloadImageWithRetry(screenshotOneUrl, 1, 2);
       if (preloadedS1) {
@@ -772,13 +810,13 @@
     `;
 
     const microlinkPromise = fetch(
-      `https://api.microlink.io/?url=${encodeURIComponent(url)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2&waitForTimeout=1500&modules=${encodeURIComponent(removeBannersJs)}`
+      `https://api.microlink.io/?url=${encodeURIComponent(captureUrl)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2&waitForTimeout=1500&modules=${encodeURIComponent(removeBannersJs)}`
     ).then(res => res.json()).catch(e => {
       console.warn('Microlink indisponible', e);
       return null;
     });
 
-    const jinaTitlePromise = fetchTitleViaJina(url);
+    const jinaTitlePromise = fetchTitleViaJina(captureUrl);
 
     const [microlinkResult, jinaTitle] = await Promise.all([microlinkPromise, jinaTitlePromise]);
 
@@ -806,7 +844,7 @@
     // Tentative de secours pour l'image : si rien n'a fonctionné jusqu'ici, on
     // essaie mshots (moteur de capture différent, gratuit, sans clé).
     if (!imageUrl) {
-      imageUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=600&h=400`;
+      imageUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(captureUrl)}?w=600&h=400`;
     }
 
     // L'URL renvoyée peut pointer vers une image encore en cours de génération
@@ -835,6 +873,7 @@
   async function addBricoLink(url) {
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
+
     const { title, imageUrl, needsManualImage } = await fetchAutoScreenshot(url);
 
     const card = {
@@ -1005,7 +1044,6 @@
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return;
-
       const reader = new FileReader();
       reader.onload = (e) => {
         // Redimensionne l'image pour éviter de saturer le localStorage avec des photos trop lourdes
@@ -1089,6 +1127,5 @@
     loadSavedCards();
   }
 </script>
-
 </body>
 </html>
