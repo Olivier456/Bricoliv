@@ -59,6 +59,17 @@
       gap: 10px;
     }
 
+    .settings-btn {
+      background: #fff;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      width: 40px;
+      height: 40px;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    .settings-btn:hover { background: #f8f9fa; }
+
     .app-title span {
       background: linear-gradient(135deg, #2563EB, #1D4ED8);
       color: white;
@@ -123,6 +134,7 @@
     .star-rating, .heart-rating { display: flex; gap: 4px; cursor: pointer; font-size: 18px; }
     .star-rating span, .heart-rating span { opacity: 0.25; filter: grayscale(1); transition: 0.15s; }
     .star-rating span.active, .heart-rating span.active { opacity: 1; filter: none; transform: scale(1.1); }
+
     .btn-submit {
       width: 100%;
       padding: 14px;
@@ -227,6 +239,7 @@
       transform: translateY(-2px);
       box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.08);
     }
+
     .card img {
       width: 100%;
       height: 150px;
@@ -373,6 +386,7 @@
       font-size: 13px;
       font-weight: 600;
     }
+
     .clickable-rating {
       cursor: pointer;
       padding: 2px 6px;
@@ -416,6 +430,7 @@
     <div class="app-title">
       🛠️ BricoBoard <span>2026</span>
     </div>
+    <button class="settings-btn" onclick="configureScreenshotOneKey()" title="Configurer un service de capture plus fiable (optionnel)">⚙️</button>
   </header>
 
   <div class="add-card">
@@ -423,7 +438,6 @@
       <label>🔗 URL du projet</label>
       <input type="url" id="urlInput" placeholder="https://..." autocomplete="off">
     </div>
-
     <div class="form-group">
       <label>📁 Catégorie</label>
       <div class="form-row">
@@ -486,7 +500,6 @@
 
     const raw = localStorage.getItem('brico_shared_payload');
     if (!raw) return;
-
     try {
       const shared = JSON.parse(raw);
       // Android envoie souvent l'URL dans "text" ou "url" selon l'app source
@@ -561,6 +574,7 @@
       renderCategories();
     }
   }
+
   function editCat(e, index) {
     e.stopPropagation();
     const newName = prompt("Modifier la catégorie :", categories[index]);
@@ -667,6 +681,47 @@
     }
   }
 
+  // Construit l'URL ScreenshotOne si une clé d'accès a été configurée par
+  // l'utilisateur (inscription gratuite sur screenshotone.com, 100 captures/mois,
+  // blocage natif des bannières de cookies/pubs/chats — bien plus fiable que le
+  // nettoyage JS artisanal utilisé précédemment avec Microlink).
+  function buildScreenshotOneUrl(url) {
+    const key = localStorage.getItem('screenshotone_key');
+    if (!key) return null;
+    const params = new URLSearchParams({
+      access_key: key,
+      url: url,
+      block_cookie_banners: 'true',
+      block_ads: 'true',
+      block_chats: 'true',
+      block_trackers: 'true',
+      format: 'jpg',
+      viewport_width: '1000',
+      viewport_height: '800',
+      image_quality: '80',
+      cache: 'true'
+    });
+    return `https://api.screenshotone.com/take?${params.toString()}`;
+  }
+
+  // Ouvre une petite invite pour configurer (ou mettre à jour) la clé ScreenshotOne.
+  function configureScreenshotOneKey() {
+    const current = localStorage.getItem('screenshotone_key') || '';
+    const key = prompt(
+      "Collez votre clé d'accès ScreenshotOne (gratuite sur screenshotone.com, rubrique API Access Keys) :",
+      current
+    );
+    if (key !== null) {
+      if (key.trim()) {
+        localStorage.setItem('screenshotone_key', key.trim());
+        alert('Clé enregistrée. Les prochains aperçus utiliseront ScreenshotOne en priorité.');
+      } else {
+        localStorage.removeItem('screenshotone_key');
+        alert('Clé supprimée.');
+      }
+    }
+  }
+
   // Récupère automatiquement un aperçu (titre + image) pour une URL donnée.
   // Réutilisée à la fois pour l'ajout d'un nouveau projet et pour le bouton
   // "Régénérer l'aperçu" sur une carte déjà existante.
@@ -674,7 +729,19 @@
     let imageUrl = null;
     let title = null;
 
-    // Tentative 1 : Microlink, en JSON complet pour pouvoir vérifier le résultat
+    // Tentative 1 (prioritaire si configurée) : ScreenshotOne, service dédié avec
+    // blocage natif des bannières de cookies — beaucoup plus fiable qu'un nettoyage
+    // JS artisanal. Retourne directement l'image (pas de JSON à parser), donc on
+    // vérifie juste qu'elle est réellement chargeable plus bas via preloadImageWithRetry.
+    const screenshotOneUrl = buildScreenshotOneUrl(url);
+    if (screenshotOneUrl) {
+      const preloadedS1 = await preloadImageWithRetry(screenshotOneUrl, 1, 2);
+      if (preloadedS1) {
+        imageUrl = preloadedS1;
+      }
+    }
+
+    // Tentative 2 : Microlink, en JSON complet pour pouvoir vérifier le résultat
     // avant de l'utiliser (titre + image), au lieu de l'injecter en aveugle.
     // On utilise `modules` (JavaScript) plutôt que `styles` (CSS) car les bannières
     // de consentement modernes (Axeptio, Didomi, OneTrust...) sont souvent construites
@@ -722,23 +789,22 @@
       if (candidateTitle && !looksLikeBlockedPage(candidateTitle)) {
         title = candidateTitle;
       }
-      // On ne fait confiance à l'image que si le titre associé n'a PAS l'air
-      // d'une page de blocage : Microlink peut techniquement "réussir" une capture
-      // tout en photographiant une page "Accès interdit" (WAF du site cible, ou
-      // protection de Microlink lui-même). Une image de ce type est trompeuse,
-      // mieux vaut basculer sur mshots plutôt que de l'afficher comme si de rien.
-      if (candidateImage && !looksLikeBlockedPage(candidateTitle)) {
+      // On ne fait confiance à l'image Microlink que si on n'a pas déjà une image
+      // ScreenshotOne valide, ET que le titre associé n'a pas l'air d'une page de
+      // blocage (Microlink peut techniquement "réussir" une capture tout en
+      // photographiant une page "Accès interdit").
+      if (!imageUrl && candidateImage && !looksLikeBlockedPage(candidateTitle)) {
         imageUrl = candidateImage;
       }
     }
 
-    // Si Microlink n'a pas donné de titre exploitable, on utilise celui de Jina.
+    // Si aucun service n'a donné de titre exploitable, on utilise celui de Jina.
     if (!title && jinaTitle) {
       title = jinaTitle;
     }
 
-    // Tentative de secours pour l'image : si Microlink n'a rien donné d'exploitable
-    // (ou a été écarté comme page de blocage), on essaie mshots.
+    // Tentative de secours pour l'image : si rien n'a fonctionné jusqu'ici, on
+    // essaie mshots (moteur de capture différent, gratuit, sans clé).
     if (!imageUrl) {
       imageUrl = `https://s.wordpress.com/mshots/v1/${encodeURIComponent(url)}?w=600&h=400`;
     }
@@ -749,21 +815,19 @@
     // aussi ses dimensions réelles, avant de l'utiliser, pour être sûr qu'elle
     // s'affiche correctement du premier coup.
     const preloadedImage = await preloadImageWithRetry(imageUrl);
-    const imageFailed = !preloadedImage;
 
-    // Si le préchargement a définitivement échoué, on utilise un SVG généré
-    // localement plutôt qu'une URL cassée : ça garantit un affichage propre
-    // sans dépendre d'un "onerror" qui pourrait ne jamais se déclencher.
-    const finalImageUrl = imageFailed
-      ? 'data:image/svg+xml;utf8,' + encodeURIComponent(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="%23895353"/><text x="300" y="200" font-size="24" fill="%23f8eeee" text-anchor="middle" font-family="Arial">Aperçu indisponible</text></svg>'
-        )
-      : preloadedImage;
+    // Si absolument rien n'a fonctionné, on utilise un SVG généré localement :
+    // garantit un rendu propre, sans jamais dépendre d'une URL externe cassée
+    // (c'est ce qui produisait auparavant l'icône rouge de Chrome, quand un
+    // "null" finissait directement dans l'attribut src de l'image).
+    const svgFallback = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#895353"/><text x="300" y="200" font-size="24" fill="#f8eeee" text-anchor="middle" font-family="Arial">Aperçu indisponible</text></svg>'
+    );
 
     return {
       title: title || fallbackTitleFromUrl(url),
-      imageUrl: finalImageUrl,
-      needsManualImage: !title || imageFailed
+      imageUrl: preloadedImage || svgFallback,
+      needsManualImage: !title || !preloadedImage
     };
   }
 
@@ -771,7 +835,6 @@
   async function addBricoLink(url) {
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
-
     const { title, imageUrl, needsManualImage } = await fetchAutoScreenshot(url);
 
     const card = {
@@ -938,6 +1001,7 @@
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
+
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return;
@@ -979,6 +1043,7 @@
     if (activeFilter !== 'Tous') {
       saved = saved.filter(item => item.category === activeFilter);
     }
+
     saved.forEach(card => {
       const el = document.createElement('div');
       el.className = 'card';
