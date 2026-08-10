@@ -716,6 +716,8 @@
       access_key: key,
       url: url,
       block_cookie_banners: 'true',
+      block_banners_by_heuristics: 'true', // méthode heuristique de secours, utile
+                                            // quand le blocage standard ne suffit pas
       block_ads: 'true',
       block_chats: 'true',
       block_trackers: 'true',
@@ -725,6 +727,19 @@
       image_quality: '80',
       cache: 'true'
     });
+    // hide_selectors masque en plus les pop-up marketing/newsletter (type
+    // "Débloquez 10% de réduction") qui ne sont pas des bannières de cookies
+    // et donc pas couverts par block_cookie_banners.
+    const promoSelectors = [
+      '[class*="newsletter" i]', '[id*="newsletter" i]',
+      '[class*="popup" i]', '[id*="popup" i]',
+      '[class*="promo-modal" i]', '[class*="promo-overlay" i]',
+      '[class*="subscribe-modal" i]', '[class*="signup-modal" i]',
+      '[class*="optin" i]', '[id*="optin" i]',
+      '[class*="lightbox" i]:not(img)', '[class*="exit-intent" i]'
+    ];
+    promoSelectors.forEach(sel => params.append('hide_selectors', sel));
+
     return `https://api.screenshotone.com/take?${params.toString()}`;
   }
 
@@ -967,7 +982,6 @@
     if (btn) { btn.textContent = '⏳ Régénération...'; btn.disabled = true; }
 
     const { title, imageUrl, needsManualImage } = await fetchAutoScreenshot(card.url);
-
     const idx = saved.findIndex(c => c.id === cardId);
     if (idx !== -1) {
       saved[idx].image = imageUrl;
@@ -1066,6 +1080,7 @@
       }
     }
   }
+
   function editDifficulty(id) {
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     const card = saved.find(item => item.id === id);
@@ -1134,7 +1149,6 @@
 
     input.click();
   }
-
   function loadSavedCards() {
     const container = document.getElementById('cardsContainer');
     container.innerHTML = '';
