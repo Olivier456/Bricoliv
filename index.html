@@ -487,9 +487,33 @@
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js').then(reg => {
         console.log('Service Worker enregistré:', reg.scope);
+        // Vérifie s'il existe une nouvelle version dès l'ouverture de l'app,
+        // sans attendre le cycle de vérification par défaut du navigateur.
+        reg.update();
       }).catch(err => {
         console.error('Échec enregistrement SW:', err);
       });
+    });
+
+    // Mise à jour automatique : dès qu'un nouveau service worker (contenant
+    // les dernières corrections) prend le contrôle de la page, on recharge
+    // l'app une seule fois pour que le nouveau code s'applique immédiatement,
+    // sans que l'utilisateur ait besoin de vider le cache manuellement.
+    let hasReloadedForUpdate = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hasReloadedForUpdate) return;
+      hasReloadedForUpdate = true;
+      window.location.reload();
+    });
+
+    // Revérifie les mises à jour chaque fois que l'app revient au premier plan
+    // (utile en PWA installée, où l'onglet reste ouvert longtemps).
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        navigator.serviceWorker.getRegistration().then(reg => {
+          if (reg) reg.update();
+        });
+      }
     });
   }
 
@@ -497,9 +521,9 @@
   function handleIncomingShare() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('shared') !== '1') return;
-
     const raw = localStorage.getItem('brico_shared_payload');
     if (!raw) return;
+
     try {
       const shared = JSON.parse(raw);
       // Android envoie souvent l'URL dans "text" ou "url" selon l'app source
@@ -730,6 +754,7 @@
   function canonicalizeUrlForCapture(url) {
     try {
       const parsed = new URL(url);
+
       // Cas spécial Amazon : on extrait le lien canonique du produit
       // (domaine + /dp/ASIN), qui est bien plus stable pour la capture que
       // l'URL complète avec ses paramètres de clic publicitaire.
@@ -870,6 +895,41 @@
   }
 
 
+  // Certains services de capture renvoient une image "espace réservé" (en cours
+  // de génération côté serveur) qui passe pourtant nos vérifications de validité
+  // (dimensions non nulles), donc l'app l'accepte comme si elle était définitive.
+  // La vraie capture ne devient disponible qu'un peu plus tard. Plutôt que de
+  // forcer l'utilisateur à recharger l'onglet pour la voir, on programme un
+  // rafraîchissement automatique et silencieux de l'image en arrière-plan.
+  function scheduleImageRefresh(cardId, originalUrl) {
+    if (!originalUrl || !originalUrl.startsWith('http')) return; // pas pour les SVG locaux
+
+    [3000, 6000, 10000].forEach(delay => {
+      setTimeout(() => {
+        const img = document.querySelector(`img[data-card-id="${cardId}"]`);
+        if (!img) return; // la carte a peut-être été supprimée entre-temps
+
+        const separator = originalUrl.includes('?') ? '&' : '?';
+        const freshUrl = `${originalUrl}${separator}_refresh=${Date.now()}`;
+        const testImg = new Image();
+        testImg.onload = () => {
+          if (testImg.naturalWidth > 0 && testImg.naturalHeight > 0) {
+            img.src = freshUrl;
+            // On met aussi à jour la sauvegarde pour que le prochain chargement
+            // de l'app affiche directement la version rafraîchie.
+            const saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
+            const idx = saved.findIndex(c => c.id === cardId);
+            if (idx !== -1) {
+              saved[idx].image = freshUrl;
+              localStorage.setItem('brico_items', JSON.stringify(saved));
+            }
+          }
+        };
+        testImg.src = freshUrl;
+      }, delay);
+    });
+  }
+
   async function addBricoLink(url) {
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
@@ -891,6 +951,8 @@
     saveCard(card);
     loadSavedCards();
     loader.style.display = 'none';
+
+    scheduleImageRefresh(card.id, imageUrl);
   }
 
   // Régénère l'aperçu automatique d'une carte déjà enregistrée, sans avoir besoin
@@ -1004,7 +1066,6 @@
       }
     }
   }
-
   function editDifficulty(id) {
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     const card = saved.find(item => item.id === id);
@@ -1044,6 +1105,7 @@
     input.onchange = () => {
       const file = input.files && input.files[0];
       if (!file) return;
+
       const reader = new FileReader();
       reader.onload = (e) => {
         // Redimensionne l'image pour éviter de saturer le localStorage avec des photos trop lourdes
@@ -1093,7 +1155,7 @@
       el.innerHTML = `
         <button class="delete-btn" onclick="deleteCard(${card.id})" title="Supprimer">✕</button>
         <div class="card-img-wrap">
-          <img src="${card.image}" data-original-src="${card.image}" data-retry-count="0" onerror="retryImageLoad(this);">
+          <img src="${card.image}" data-original-src="${card.image}" data-card-id="${card.id}" data-retry-count="0" onerror="retryImageLoad(this);">
           <div class="capture-fallback" style="display:none;">
             <span>📷 Aperçu indisponible</span>
             <button class="capture-btn" onclick="captureManually(${card.id})">Choisir une image</button>
@@ -1117,6 +1179,19 @@
         </div>
       `;
       container.appendChild(el);
+
+      // Sur certains navigateurs mobiles, une image insérée via innerHTML ne
+      // démarre pas toujours son chargement réseau immédiatement (elle attend
+      // un cycle de reflow qui peut ne survenir qu'au rechargement de l'onglet).
+      // On force explicitement le (re)chargement juste après l'insertion dans
+      // le DOM pour garantir un affichage immédiat, sans dépendre de ce timing.
+      const insertedImg = el.querySelector('img');
+      if (insertedImg && insertedImg.src) {
+        const src = insertedImg.src;
+        requestAnimationFrame(() => {
+          insertedImg.src = src;
+        });
+      }
     });
   }
 
@@ -1127,5 +1202,6 @@
     loadSavedCards();
   }
 </script>
+
 </body>
 </html>
