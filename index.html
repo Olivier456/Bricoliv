@@ -729,14 +729,31 @@
     });
     // hide_selectors masque en plus les pop-up marketing/newsletter (type
     // "Débloquez 10% de réduction") qui ne sont pas des bannières de cookies
-    // et donc pas couverts par block_cookie_banners.
+    // et donc pas couverts par block_cookie_banners. Ces pop-up sont souvent
+    // générés par des outils tiers (fréquents sur Shopify) dont les noms de
+    // classes ne contiennent pas forcément "newsletter"/"popup" : on ajoute
+    // donc aussi les patterns spécifiques des outils les plus courants, plus
+    // un sélecteur générique basé sur role="dialog" (attribut d'accessibilité
+    // très largement utilisé par ces pop-up modernes, quel que soit l'outil).
     const promoSelectors = [
       '[class*="newsletter" i]', '[id*="newsletter" i]',
       '[class*="popup" i]', '[id*="popup" i]',
       '[class*="promo-modal" i]', '[class*="promo-overlay" i]',
       '[class*="subscribe-modal" i]', '[class*="signup-modal" i]',
       '[class*="optin" i]', '[id*="optin" i]',
-      '[class*="lightbox" i]:not(img)', '[class*="exit-intent" i]'
+      '[class*="lightbox" i]:not(img)', '[class*="exit-intent" i]',
+      // Outils tiers courants sur Shopify/e-commerce
+      '[class*="privy" i]', '[id*="privy" i]',
+      '[class*="klaviyo" i]', '[id*="klaviyo" i]',
+      '[class*="optinmonster" i]', '[id^="om-"]',
+      '[class*="justuno" i]', '[id*="justuno" i]',
+      '[class*="wisepops" i]', '[id*="wisepops" i]',
+      '[class*="poptin" i]', '[id*="poptin" i]',
+      '[class*="sumo" i]', '.sumome-overlay',
+      '[class*="mc-modal" i]', '[class*="omnisend" i]',
+      // Sélecteur générique : les pop-up modernes utilisent presque toujours
+      // ces attributs d'accessibilité, quel que soit l'outil sous-jacent.
+      '[role="dialog"]', '[aria-modal="true"]'
     ];
     promoSelectors.forEach(sel => params.append('hide_selectors', sel));
 
@@ -818,7 +835,6 @@
         imageUrl = preloadedS1;
       }
     }
-
     // Tentative 2 : Microlink, en JSON complet pour pouvoir vérifier le résultat
     // avant de l'utiliser (titre + image), au lieu de l'injecter en aveugle.
     // On utilise `modules` (JavaScript) plutôt que `styles` (CSS) car les bannières
@@ -923,7 +939,6 @@
       setTimeout(() => {
         const img = document.querySelector(`img[data-card-id="${cardId}"]`);
         if (!img) return; // la carte a peut-être été supprimée entre-temps
-
         const separator = originalUrl.includes('?') ? '&' : '?';
         const freshUrl = `${originalUrl}${separator}_refresh=${Date.now()}`;
         const testImg = new Image();
@@ -944,7 +959,6 @@
       }, delay);
     });
   }
-
   async function addBricoLink(url) {
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
@@ -982,6 +996,7 @@
     if (btn) { btn.textContent = '⏳ Régénération...'; btn.disabled = true; }
 
     const { title, imageUrl, needsManualImage } = await fetchAutoScreenshot(card.url);
+
     const idx = saved.findIndex(c => c.id === cardId);
     if (idx !== -1) {
       saved[idx].image = imageUrl;
@@ -1149,6 +1164,7 @@
 
     input.click();
   }
+
   function loadSavedCards() {
     const container = document.getElementById('cardsContainer');
     container.innerHTML = '';
