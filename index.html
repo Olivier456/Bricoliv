@@ -707,9 +707,11 @@
 
   // Construit l'URL ScreenshotAPI.net si un token a été configuré par
   // l'utilisateur (inscription gratuite sur screenshotapi.net, rubrique API Key).
-  // Ce service bloque nativement les bannières de cookies/pubs, et on complète
-  // avec une injection CSS pour les pop-up marketing (newsletter, réductions...)
-  // qui ne sont pas des bannières de cookies à proprement parler.
+  // Ce service bloque nativement les bannières de cookies/pubs/pop-up via
+  // block_ads, no_cookie_banners et block_popups, et on complète avec
+  // remove_selector (conçu spécifiquement pour supprimer des éléments par
+  // sélecteur CSS avant la capture) pour les pop-up marketing spécifiques
+  // (newsletter, réductions...) que le blocage natif pourrait manquer.
   function buildScreenshotApiUrl(url) {
     const key = localStorage.getItem('screenshotapi_net_key');
     if (!key) return null;
@@ -718,7 +720,9 @@
     // outils tiers les plus courants sur Shopify/e-commerce (Privy, Klaviyo,
     // OptinMonster...), plus un sélecteur générique basé sur role="dialog",
     // un attribut d'accessibilité très largement utilisé par ces pop-up
-    // modernes quel que soit l'outil sous-jacent.
+    // modernes quel que soit l'outil sous-jacent. Un sélecteur CSS peut
+    // légitimement contenir des virgules (regroupement de sélecteurs), donc
+    // on les combine en une seule chaîne pour remove_selector.
     const promoSelectors = [
       '[class*="newsletter" i]', '[id*="newsletter" i]',
       '[class*="popup" i]', '[id*="popup" i]',
@@ -735,10 +739,7 @@
       '[class*="sumo" i]', '.sumome-overlay',
       '[class*="mc-modal" i]', '[class*="omnisend" i]',
       '[role="dialog"]', '[aria-modal="true"]'
-    ];
-    // ScreenshotAPI.net accepte un unique paramètre `css` contenant une règle
-    // CSS complète : on combine donc tous les sélecteurs en une seule règle.
-    const hidePromosCss = `${promoSelectors.join(', ')} { display: none !important; }`;
+    ].join(', ');
 
     const params = new URLSearchParams({
       token: key,
@@ -746,12 +747,16 @@
       output: 'image',
       file_type: 'png',
       block_ads: 'true',
+      block_popups: 'true',
       no_cookie_banners: 'true',
+      remove_selector: promoSelectors,
       wait_for_event: 'load',
+      delay: '2000', // laisse le temps aux pop-up à apparition différée (souvent
+                      // déclenchés par un minuteur JS) de s'afficher avant d'être
+                      // supprimés, plutôt que de les manquer en capturant trop tôt
       full_page: 'false',
       width: '1000',
-      height: '800',
-      css: hidePromosCss
+      height: '800'
     });
 
     return `https://shot.screenshotapi.net/v3/screenshot?${params.toString()}`;
@@ -872,7 +877,6 @@
     });
 
     const jinaTitlePromise = fetchTitleViaJina(captureUrl);
-
     const [microlinkResult, jinaTitle] = await Promise.all([microlinkPromise, jinaTitlePromise]);
 
     if (microlinkResult && microlinkResult.status === 'success' && microlinkResult.data) {
@@ -977,7 +981,6 @@
       image: imageUrl,
       needsManualImage: needsManualImage
     };
-
     saveCard(card);
     loadSavedCards();
     loader.style.display = 'none';
@@ -1024,6 +1027,7 @@
       const img = new Image();
       const separator = url.includes('?') ? '&' : '?';
       const bustedUrl = attempt === 1 ? url : `${url}${separator}_retry=${attempt}-${Date.now()}`;
+
       const timeoutId = setTimeout(() => {
         img.onload = null;
         img.onerror = null;
@@ -1123,7 +1127,6 @@
       }
     }
   }
-
   // Import d'image manuel : plus fiable que getDisplayMedia() (mal supporté sur
   // Chrome Android). L'utilisateur choisit une photo depuis sa galerie, ou prend
   // une nouvelle capture d'écran via son téléphone puis l'importe ici.
