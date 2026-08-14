@@ -304,6 +304,14 @@
     }
     .recapture-btn:hover { background: rgba(0,0,0,0.75); }
 
+    .pulse-attention {
+      animation: pulseAttention 1s ease-in-out 3;
+    }
+    @keyframes pulseAttention {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(137, 83, 83, 0.7); }
+      50% { transform: scale(1.08); box-shadow: 0 0 0 8px rgba(137, 83, 83, 0); }
+    }
+
     .regenerate-btn {
       position: absolute;
       bottom: 8px;
@@ -438,6 +446,7 @@
       <label>🔗 URL du projet</label>
       <input type="url" id="urlInput" placeholder="https://..." autocomplete="off">
     </div>
+
     <div class="form-group">
       <label>📁 Catégorie</label>
       <div class="form-row">
@@ -450,7 +459,6 @@
       <label>📝 Note ou remarque</label>
       <textarea id="noteInput" placeholder="Ex: Prévoir des chevilles M6 et de l'enduit..."></textarea>
     </div>
-
     <div class="ratings-container">
       <div class="rating-box">
         <label>⭐ Difficulté</label>
@@ -517,27 +525,133 @@
     });
   }
 
-  // Réception d'un contenu partagé depuis Android (via share.html)
-  function handleIncomingShare() {
+  // Réception d'un contenu partagé depuis Android (via share.html, intercepté
+  // par le service worker qui stocke les données en IndexedDB en attendant que
+  // cette page démarre).
+  async function handleIncomingShare() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('shared') !== '1') return;
-    const raw = localStorage.getItem('brico_shared_payload');
-    if (!raw) return;
+
+    // Nettoie l'URL tout de suite pour éviter un re-traitement si l'utilisateur
+    // recharge la page pendant ou après le traitement du partage.
+    window.history.replaceState({}, document.title, './index.html');
 
     try {
-      const shared = JSON.parse(raw);
-      // Android envoie souvent l'URL dans "text" ou "url" selon l'app source
-      const candidateUrl = shared.url || extractUrlFromText(shared.text) || shared.text;
-      if (candidateUrl) {
-        addBricoLink(candidateUrl.trim());
+      const db = await openShareDb();
+      const payload = await getFromShareDb(db, 'payload');
+
+      if (payload) {
+        if (payload.hasImage) {
+          const imageFile = await getFromShareDb(db, 'image');
+          if (imageFile) {
+            await createCardFromSharedImage(imageFile, payload);
+          }
+        } else {
+          // Android envoie souvent l'URL dans "text" ou "url" selon l'app source
+          const candidateUrl = payload.url || extractUrlFromText(payload.text) || payload.text;
+          if (candidateUrl) {
+            addBricoLink(candidateUrl.trim(), { fromShare: true });
+          }
+        }
+        await clearShareDb(db);
+        return;
+      }
+
+      // Repli : si rien n'a été trouvé en IndexedDB (le service worker n'a
+      // peut-être pas encore pris le contrôle de la page), on regarde le
+      // stockage de secours utilisé par share.html pour un partage de lien simple.
+      const fallbackRaw = localStorage.getItem('brico_shared_payload_fallback');
+      if (fallbackRaw) {
+        const fallback = JSON.parse(fallbackRaw);
+        const candidateUrl = fallback.url || extractUrlFromText(fallback.text) || fallback.text;
+        if (candidateUrl) {
+          addBricoLink(candidateUrl.trim(), { fromShare: true });
+        }
+        localStorage.removeItem('brico_shared_payload_fallback');
       }
     } catch (e) {
       console.error('Erreur lecture partage', e);
-    } finally {
-      localStorage.removeItem('brico_shared_payload');
-      // Nettoie l'URL pour éviter un re-ajout si l'utilisateur recharge la page
-      window.history.replaceState({}, document.title, './index.html');
     }
+  }
+
+  function openShareDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open('brico-share-db', 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore('shared');
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  function getFromShareDb(db, key) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('shared', 'readonly');
+      const req = tx.objectStore('shared').get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function clearShareDb(db) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('shared', 'readwrite');
+      tx.objectStore('shared').clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  // Crée directement une nouvelle carte à partir d'une image partagée depuis
+  // la Galerie/Aperçus (ex: une capture d'écran manuelle) : pas d'aperçu
+  // automatique à récupérer, l'image partagée devient directement celle de
+  // la carte. L'URL du projet reste vide, modifiable manuellement si besoin.
+  async function createCardFromSharedImage(imageFile, payload) {
+    const dataUrl = await blobToDataUrl(imageFile);
+
+    // Redimensionne pour éviter de saturer le localStorage avec des photos trop lourdes.
+    const resizedDataUrl = await resizeImageDataUrl(dataUrl, 800);
+
+    const card = {
+      id: Date.now(),
+      url: (payload.url || '').trim(),
+      title: (payload.title || '').trim() || 'Projet Brico',
+      category: document.getElementById('catSelect').value,
+      note: '',
+      difficulty: currentDifficulty,
+      hearts: currentHeart,
+      image: resizedDataUrl,
+      needsManualImage: false
+    };
+
+    saveCard(card);
+    loadSavedCards();
+    highlightCardForManualImage(card.id); // met en évidence la carte fraîchement créée
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function resizeImageDataUrl(dataUrl, maxWidth) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.onerror = () => resolve(dataUrl); // en cas d'échec, on garde l'original
+      img.src = dataUrl;
+    });
   }
 
   function extractUrlFromText(text) {
@@ -826,7 +940,6 @@
 
     let imageUrl = null;
     let title = null;
-
     // Tentative 1 (prioritaire si configurée) : ScreenshotAPI.net, service dédié
     // avec blocage natif des bannières de cookies — beaucoup plus fiable qu'un
     // nettoyage JS artisanal. Retourne directement l'image (pas de JSON à parser),
@@ -868,7 +981,6 @@
         document.body.style.overflow = 'auto';
       })();
     `;
-
     const microlinkPromise = fetch(
       `https://api.microlink.io/?url=${encodeURIComponent(captureUrl)}&screenshot=true&meta=true&adblock=true&waitUntil=networkidle2&waitForTimeout=1500&modules=${encodeURIComponent(removeBannersJs)}`
     ).then(res => res.json()).catch(e => {
@@ -877,6 +989,7 @@
     });
 
     const jinaTitlePromise = fetchTitleViaJina(captureUrl);
+
     const [microlinkResult, jinaTitle] = await Promise.all([microlinkPromise, jinaTitlePromise]);
 
     if (microlinkResult && microlinkResult.status === 'success' && microlinkResult.data) {
@@ -964,7 +1077,7 @@
     });
   }
 
-  async function addBricoLink(url) {
+  async function addBricoLink(url, options = {}) {
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
 
@@ -981,19 +1094,41 @@
       image: imageUrl,
       needsManualImage: needsManualImage
     };
+
     saveCard(card);
     loadSavedCards();
     loader.style.display = 'none';
 
     scheduleImageRefresh(card.id, imageUrl);
+
+    // Quand l'ajout vient d'un partage Android, on facilite la correction
+    // manuelle de l'image si besoin : on fait défiler jusqu'à la nouvelle
+    // carte et on met son bouton d'import en évidence quelques secondes,
+    // pour qu'un seul tap suffise si l'aperçu automatique ne convient pas.
+    if (options.fromShare) {
+      highlightCardForManualImage(card.id);
+    }
+
+    return card.id;
+  }
+
+  // Fait défiler jusqu'à une carte et pulse son bouton d'import d'image,
+  // pour guider l'utilisateur vers une correction rapide en un tap.
+  function highlightCardForManualImage(cardId) {
+    setTimeout(() => {
+      const btn = document.querySelector(`.recapture-btn[data-card-id="${cardId}"]`);
+      if (!btn) return;
+      btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      btn.classList.add('pulse-attention');
+      setTimeout(() => btn.classList.remove('pulse-attention'), 4000);
+    }, 600);
   }
 
   // Régénère l'aperçu automatique d'une carte déjà enregistrée, sans avoir besoin
   // de supprimer/recréer le projet. Utile si le premier essai a échoué (site
   // temporairement bloqué, quota Microlink dépassé, etc.).
   async function regenerateImage(cardId) {
-    const saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
-    const card = saved.find(c => c.id === cardId);
+    const card = JSON.parse(localStorage.getItem('brico_items') || '[]').find(c => c.id === cardId);
     if (!card) return;
 
     const btn = document.querySelector(`.regenerate-btn[data-card-id="${cardId}"]`);
@@ -1001,6 +1136,11 @@
 
     const { title, imageUrl, needsManualImage } = await fetchAutoScreenshot(card.url);
 
+    // On relit le localStorage juste avant d'écrire (plutôt qu'au tout début de
+    // la fonction) : si l'utilisateur a lancé plusieurs régénérations en même
+    // temps sur des cartes différentes, cela évite qu'un appel plus lent écrase
+    // avec des données périmées le résultat qu'un autre appel vient d'enregistrer.
+    const saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     const idx = saved.findIndex(c => c.id === cardId);
     if (idx !== -1) {
       saved[idx].image = imageUrl;
@@ -1071,7 +1211,6 @@
       img.src = bustedUrl;
     });
   }
-
   function saveCard(card) {
     const saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     saved.unshift(card);
@@ -1113,7 +1252,6 @@
       }
     }
   }
-
   function editHearts(id) {
     let saved = JSON.parse(localStorage.getItem('brico_items') || '[]');
     const card = saved.find(item => item.id === id);
@@ -1127,6 +1265,7 @@
       }
     }
   }
+
   // Import d'image manuel : plus fiable que getDisplayMedia() (mal supporté sur
   // Chrome Android). L'utilisateur choisit une photo depuis sa galerie, ou prend
   // une nouvelle capture d'écran via son téléphone puis l'importe ici.
@@ -1195,7 +1334,7 @@
           </div>
           ${card.needsManualImage ? '<div class="verify-badge" title="Aperçu à vérifier, le site a peut-être bloqué la capture automatique">⚠️ À vérifier</div>' : ''}
           <button class="regenerate-btn" data-card-id="${card.id}" onclick="regenerateImage(${card.id})" title="Régénérer l'aperçu automatique">🔄 Régénérer</button>
-          <button class="recapture-btn" onclick="captureManually(${card.id})" title="Remplacer par une image de votre choix">🖼️ Changer l'image</button>
+          <button class="recapture-btn" data-card-id="${card.id}" onclick="captureManually(${card.id})" title="Remplacer par une image de votre choix">🖼️ Changer l'image</button>
         </div>
         <div class="card-body">
           <select class="card-badge-select" onchange="updateCardCategory(${card.id}, this.value)">
