@@ -430,7 +430,7 @@
     <div class="app-title">
       🛠️ BricoBoard <span>2026</span>
     </div>
-    <button class="settings-btn" onclick="configureScreenshotOneKey()" title="Configurer un service de capture plus fiable (optionnel)">⚙️</button>
+    <button class="settings-btn" onclick="configureScreenshotApiKey()" title="Configurer un service de capture plus fiable (optionnel)">⚙️</button>
   </header>
 
   <div class="add-card">
@@ -705,36 +705,20 @@
     }
   }
 
-  // Construit l'URL ScreenshotOne si une clé d'accès a été configurée par
-  // l'utilisateur (inscription gratuite sur screenshotone.com, 100 captures/mois,
-  // blocage natif des bannières de cookies/pubs/chats — bien plus fiable que le
-  // nettoyage JS artisanal utilisé précédemment avec Microlink).
-  function buildScreenshotOneUrl(url) {
-    const key = localStorage.getItem('screenshotone_key');
+  // Construit l'URL ScreenshotAPI.net si un token a été configuré par
+  // l'utilisateur (inscription gratuite sur screenshotapi.net, rubrique API Key).
+  // Ce service bloque nativement les bannières de cookies/pubs, et on complète
+  // avec une injection CSS pour les pop-up marketing (newsletter, réductions...)
+  // qui ne sont pas des bannières de cookies à proprement parler.
+  function buildScreenshotApiUrl(url) {
+    const key = localStorage.getItem('screenshotapi_net_key');
     if (!key) return null;
-    const params = new URLSearchParams({
-      access_key: key,
-      url: url,
-      block_cookie_banners: 'true',
-      block_banners_by_heuristics: 'true', // méthode heuristique de secours, utile
-                                            // quand le blocage standard ne suffit pas
-      block_ads: 'true',
-      block_chats: 'true',
-      block_trackers: 'true',
-      format: 'jpg',
-      viewport_width: '1000',
-      viewport_height: '800',
-      image_quality: '80',
-      cache: 'true'
-    });
-    // hide_selectors masque en plus les pop-up marketing/newsletter (type
-    // "Débloquez 10% de réduction") qui ne sont pas des bannières de cookies
-    // et donc pas couverts par block_cookie_banners. Ces pop-up sont souvent
-    // générés par des outils tiers (fréquents sur Shopify) dont les noms de
-    // classes ne contiennent pas forcément "newsletter"/"popup" : on ajoute
-    // donc aussi les patterns spécifiques des outils les plus courants, plus
-    // un sélecteur générique basé sur role="dialog" (attribut d'accessibilité
-    // très largement utilisé par ces pop-up modernes, quel que soit l'outil).
+
+    // Ces sélecteurs couvrent les pop-up marketing génériques ainsi que les
+    // outils tiers les plus courants sur Shopify/e-commerce (Privy, Klaviyo,
+    // OptinMonster...), plus un sélecteur générique basé sur role="dialog",
+    // un attribut d'accessibilité très largement utilisé par ces pop-up
+    // modernes quel que soit l'outil sous-jacent.
     const promoSelectors = [
       '[class*="newsletter" i]', '[id*="newsletter" i]',
       '[class*="popup" i]', '[id*="popup" i]',
@@ -742,7 +726,6 @@
       '[class*="subscribe-modal" i]', '[class*="signup-modal" i]',
       '[class*="optin" i]', '[id*="optin" i]',
       '[class*="lightbox" i]:not(img)', '[class*="exit-intent" i]',
-      // Outils tiers courants sur Shopify/e-commerce
       '[class*="privy" i]', '[id*="privy" i]',
       '[class*="klaviyo" i]', '[id*="klaviyo" i]',
       '[class*="optinmonster" i]', '[id^="om-"]',
@@ -751,28 +734,43 @@
       '[class*="poptin" i]', '[id*="poptin" i]',
       '[class*="sumo" i]', '.sumome-overlay',
       '[class*="mc-modal" i]', '[class*="omnisend" i]',
-      // Sélecteur générique : les pop-up modernes utilisent presque toujours
-      // ces attributs d'accessibilité, quel que soit l'outil sous-jacent.
       '[role="dialog"]', '[aria-modal="true"]'
     ];
-    promoSelectors.forEach(sel => params.append('hide_selectors', sel));
+    // ScreenshotAPI.net accepte un unique paramètre `css` contenant une règle
+    // CSS complète : on combine donc tous les sélecteurs en une seule règle.
+    const hidePromosCss = `${promoSelectors.join(', ')} { display: none !important; }`;
 
-    return `https://api.screenshotone.com/take?${params.toString()}`;
+    const params = new URLSearchParams({
+      token: key,
+      url: url,
+      output: 'image',
+      file_type: 'png',
+      block_ads: 'true',
+      no_cookie_banners: 'true',
+      wait_for_event: 'load',
+      full_page: 'false',
+      width: '1000',
+      height: '800',
+      css: hidePromosCss
+    });
+
+    return `https://shot.screenshotapi.net/v3/screenshot?${params.toString()}`;
   }
 
-  // Ouvre une petite invite pour configurer (ou mettre à jour) la clé ScreenshotOne.
-  function configureScreenshotOneKey() {
-    const current = localStorage.getItem('screenshotone_key') || '';
+  // Ouvre une petite invite pour configurer (ou mettre à jour) le token
+  // ScreenshotAPI.net.
+  function configureScreenshotApiKey() {
+    const current = localStorage.getItem('screenshotapi_net_key') || '';
     const key = prompt(
-      "Collez votre clé d'accès ScreenshotOne (gratuite sur screenshotone.com, rubrique API Access Keys) :",
+      "Collez votre clé API ScreenshotAPI.net (gratuite sur screenshotapi.net, rubrique API Key) :",
       current
     );
     if (key !== null) {
       if (key.trim()) {
-        localStorage.setItem('screenshotone_key', key.trim());
-        alert('Clé enregistrée. Les prochains aperçus utiliseront ScreenshotOne en priorité.');
+        localStorage.setItem('screenshotapi_net_key', key.trim());
+        alert('Clé enregistrée. Les prochains aperçus utiliseront ScreenshotAPI.net en priorité.');
       } else {
-        localStorage.removeItem('screenshotone_key');
+        localStorage.removeItem('screenshotapi_net_key');
         alert('Clé supprimée.');
       }
     }
@@ -824,17 +822,18 @@
     let imageUrl = null;
     let title = null;
 
-    // Tentative 1 (prioritaire si configurée) : ScreenshotOne, service dédié avec
-    // blocage natif des bannières de cookies — beaucoup plus fiable qu'un nettoyage
-    // JS artisanal. Retourne directement l'image (pas de JSON à parser), donc on
-    // vérifie juste qu'elle est réellement chargeable plus bas via preloadImageWithRetry.
-    const screenshotOneUrl = buildScreenshotOneUrl(captureUrl);
-    if (screenshotOneUrl) {
-      const preloadedS1 = await preloadImageWithRetry(screenshotOneUrl, 1, 2);
+    // Tentative 1 (prioritaire si configurée) : ScreenshotAPI.net, service dédié
+    // avec blocage natif des bannières de cookies — beaucoup plus fiable qu'un
+    // nettoyage JS artisanal. Retourne directement l'image (pas de JSON à parser),
+    // donc on vérifie juste qu'elle est réellement chargeable via preloadImageWithRetry.
+    const screenshotApiUrl = buildScreenshotApiUrl(captureUrl);
+    if (screenshotApiUrl) {
+      const preloadedS1 = await preloadImageWithRetry(screenshotApiUrl, 1, 2);
       if (preloadedS1) {
         imageUrl = preloadedS1;
       }
     }
+
     // Tentative 2 : Microlink, en JSON complet pour pouvoir vérifier le résultat
     // avant de l'utiliser (titre + image), au lieu de l'injecter en aveugle.
     // On utilise `modules` (JavaScript) plutôt que `styles` (CSS) car les bannières
@@ -884,8 +883,8 @@
         title = candidateTitle;
       }
       // On ne fait confiance à l'image Microlink que si on n'a pas déjà une image
-      // ScreenshotOne valide, ET que le titre associé n'a pas l'air d'une page de
-      // blocage (Microlink peut techniquement "réussir" une capture tout en
+      // ScreenshotAPI.net valide, ET que le titre associé n'a pas l'air d'une page
+      // de blocage (Microlink peut techniquement "réussir" une capture tout en
       // photographiant une page "Accès interdit").
       if (!imageUrl && candidateImage && !looksLikeBlockedPage(candidateTitle)) {
         imageUrl = candidateImage;
@@ -939,6 +938,7 @@
       setTimeout(() => {
         const img = document.querySelector(`img[data-card-id="${cardId}"]`);
         if (!img) return; // la carte a peut-être été supprimée entre-temps
+
         const separator = originalUrl.includes('?') ? '&' : '?';
         const freshUrl = `${originalUrl}${separator}_refresh=${Date.now()}`;
         const testImg = new Image();
@@ -959,6 +959,7 @@
       }, delay);
     });
   }
+
   async function addBricoLink(url) {
     const loader = document.getElementById('loader');
     loader.style.display = 'block';
@@ -1023,7 +1024,6 @@
       const img = new Image();
       const separator = url.includes('?') ? '&' : '?';
       const bustedUrl = attempt === 1 ? url : `${url}${separator}_retry=${attempt}-${Date.now()}`;
-
       const timeoutId = setTimeout(() => {
         img.onload = null;
         img.onerror = null;
