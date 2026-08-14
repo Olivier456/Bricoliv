@@ -1,4 +1,4 @@
-const CACHE_NAME = 'brico-v22';
+const CACHE_NAME = 'brico-v23';
 const ASSETS = [
   './',
   './index.html',
